@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mylinear/internal/handler"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 )
 
 // 侧边栏工作区列表：200 返回 Workspace[]（按 createdAt 升序，排序在 SQL 内完成）

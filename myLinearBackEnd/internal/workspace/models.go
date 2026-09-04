@@ -5,8 +5,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"mylinear/internal/handler"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 )
 
 // CreateWorkspaceDTO 创建工作区请求体（api.md：name 必填，description 可选）

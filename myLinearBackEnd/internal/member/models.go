@@ -1,8 +1,8 @@
 package member
 
 import (
-	"mylinear/internal/handler"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 
 	"github.com/google/uuid"
 )

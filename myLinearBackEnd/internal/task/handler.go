@@ -2,8 +2,8 @@ package task
 
 import (
 	"errors"
-	"mylinear/internal/handler"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 	"net/http"
 	"strings"
 

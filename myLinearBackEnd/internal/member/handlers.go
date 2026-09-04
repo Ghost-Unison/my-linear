@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mylinear/internal/handler"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 )
 
 // 列出工作区成员: 200 返回Member[] (按name排序，在SQL内完成)

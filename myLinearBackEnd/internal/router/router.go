@@ -4,11 +4,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mylinear/internal/handler"
-	"mylinear/internal/member"
-	"mylinear/internal/project"
-	"mylinear/internal/task"
-	"mylinear/internal/workspace"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/project"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/task"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/workspace"
 )
 
 // New 装配 Gin 引擎与路由。业务模块按 api.md 约定挂载在 /api/v1 下，

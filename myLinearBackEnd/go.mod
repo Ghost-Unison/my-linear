@@ -1,4 +1,4 @@
-module mylinear
+module github.com/Ghost-Unison/my-linear/myLinearBackEnd
 
 go 1.26.4
 

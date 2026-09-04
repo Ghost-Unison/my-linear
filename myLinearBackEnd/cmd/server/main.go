@@ -13,8 +13,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"mylinear/internal/config"
-	"mylinear/internal/router"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/config"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/router"
 )
 
 func main() {

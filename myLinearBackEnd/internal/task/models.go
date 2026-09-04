@@ -2,10 +2,10 @@ package task
 
 import (
 	"fmt"
-	"mylinear/internal/handler"
-	"mylinear/internal/member"
-	"mylinear/internal/project"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/project"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 	"time"
 
 	"cloud.google.com/go/civil"

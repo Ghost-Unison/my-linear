@@ -1,9 +1,9 @@
 package project
 
 import (
-	"mylinear/internal/handler"
-	"mylinear/internal/member"
-	"mylinear/internal/store"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 	"time"
 
 	"cloud.google.com/go/civil"
