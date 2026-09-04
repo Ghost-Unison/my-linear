@@ -1,20 +1,22 @@
 import { useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { ArrowDown, ArrowUp, Box, Plus } from "lucide-react"
 import type { ProjectRow } from "@/api/types"
 import { useProjects } from "@/hooks/useProjects"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { colorFor } from "@/lib/color"
+import { displayError } from "@/lib/errors"
 import { cn } from "@/lib/utils"
 import { MemberAvatar } from "@/components/ui/avatar"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
-import { PriorityIcon, PRIORITY_LABELS } from "@/components/ui/priority-icon"
+import { PriorityIcon, usePriorityLabel } from "@/components/ui/priority-icon"
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog"
 import {
   ProjectStatusIcon,
-  PROJECT_STATUS_LABELS,
+  useProjectStatusLabel,
 } from "@/components/project/project-status"
 
 // 表头 / 数据行共用同一套列宽：名称弹性，其余定宽，任务数右对齐
@@ -27,6 +29,7 @@ const SORTABLE = new Set(["name", "status", "priority"])
 
 // /w/:workspaceId/projects → 项目列表（P0.md §2：行只读，点击进详情页；不做行内编辑）
 export function ProjectListPage() {
+  const { t } = useTranslation()
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -36,7 +39,8 @@ export function ProjectListPage() {
   const { data: projects, isLoading, isError, error } = useProjects(workspaceId, sort, order)
   const { data: workspaces } = useWorkspaces()
   const [createOpen, setCreateOpen] = useState(false)
-  const workspaceName = workspaces?.find((w) => w.id === workspaceId)?.name ?? "Workspace"
+  const workspaceName =
+    workspaces?.find((w) => w.id === workspaceId)?.name ?? t("common.workspaceFallback")
 
   // 点同一列切换升降序；点新列重置为 asc
   const toggleSort = (field: string) => {
@@ -81,15 +85,15 @@ export function ProjectListPage() {
           <Breadcrumb
             items={[
               { label: workspaceName, to: `/w/${workspaceId}/home` },
-              { label: "Projects" },
+              { label: t("nav.projects") },
             ]}
           />
         }
-        tabs={<span className={tabPill(true)}>All projects</span>}
+        tabs={<span className={tabPill(true)}>{t("project.allProjects")}</span>}
         actions={
           <Button variant="ghost" size="sm" onClick={() => setCreateOpen(true)}>
             <Plus />
-            New project
+            {t("project.newProject")}
           </Button>
         }
       />
@@ -101,20 +105,24 @@ export function ProjectListPage() {
             <div
               className={`mt-2 grid ${ROW_GRID} gap-4 border-b border-border pb-2 text-xs font-medium text-muted-foreground`}
             >
-              {headerCell("name", "Name")}
-              {headerCell("status", "Status")}
-              {headerCell("priority", "Priority")}
-              {headerCell(null, "Lead")}
-              {headerCell(null, "Dates")}
-              {headerCell(null, "Tasks", "justify-end")}
+              {headerCell("name", t("common.name"))}
+              {headerCell("status", t("common.status"))}
+              {headerCell("priority", t("common.priority"))}
+              {headerCell(null, t("project.lead"))}
+              {headerCell(null, t("project.dates"))}
+              {headerCell(null, t("nav.tasks"), "justify-end")}
             </div>
 
-            {isLoading && <p className="py-4 text-sm text-muted-foreground">加载中…</p>}
-            {isError && <p className="py-4 text-sm text-destructive">{error.message}</p>}
-            {!isLoading && projects?.length === 0 && (
-              <p className="py-4 text-sm text-muted-foreground">
-                暂无项目。点击右上角 New project 创建第一个项目。
+            {isLoading && (
+              <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
+            )}
+            {isError && (
+              <p className="py-4 text-sm text-destructive">
+                {displayError(t, error, "errors.loadFailed")}
               </p>
+            )}
+            {!isLoading && projects?.length === 0 && (
+              <p className="py-4 text-sm text-muted-foreground">{t("project.empty")}</p>
             )}
 
             {projects?.map((p) => (
@@ -138,6 +146,8 @@ export function ProjectListPage() {
 }
 
 function ProjectListRow({ project: p, onOpen }: { project: ProjectRow; onOpen: () => void }) {
+  const statusLabel = useProjectStatusLabel()
+  const priorityLabel = usePriorityLabel()
   const start = p.startDate ?? ""
   const target = p.targetDate ?? ""
   return (
@@ -160,11 +170,11 @@ function ProjectListRow({ project: p, onOpen }: { project: ProjectRow; onOpen: (
       </span>
       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <ProjectStatusIcon status={p.status} />
-        {PROJECT_STATUS_LABELS[p.status]}
+        {statusLabel(p.status)}
       </span>
       <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
         <PriorityIcon value={p.priority} />
-        {PRIORITY_LABELS[p.priority]}
+        {priorityLabel(p.priority)}
       </span>
       <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
         {p.lead ? (

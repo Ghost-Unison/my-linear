@@ -1,15 +1,9 @@
+import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 import { cn } from "@/lib/utils"
 import type { TaskStatus } from "@/api/types"
 
-export const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
-  backlog: "Backlog",
-  todo: "Todo",
-  in_progress: "In Progress",
-  done: "Done",
-  canceled: "Canceled",
-}
-
-/** 展示/选项顺序 = 后端枚举序（api.md §2.2 CASE 排序） */
+/** 展示/选项顺序 = 后端枚举序（api.md §2.2 CASE 排序）；与语言无关，保留为常量 */
 export const TASK_STATUS_ORDER: readonly TaskStatus[] = [
   "backlog",
   "todo",
@@ -18,12 +12,21 @@ export const TASK_STATUS_ORDER: readonly TaskStatus[] = [
   "canceled",
 ]
 
-/** Select 选项集：新建弹窗与任务属性编辑共用（对称 project-status.tsx 的导出形态） */
-export const TASK_STATUS_OPTIONS = TASK_STATUS_ORDER.map((s) => ({
-  value: s,
-  label: TASK_STATUS_LABELS[s],
-  icon: <TaskStatusIcon status={s} />,
-}))
+/** 状态标签：key = enums.taskStatus.<status>；供组件经 t 求值，随语言切换刷新 */
+export function taskStatusLabel(t: TFunction, s: TaskStatus): string {
+  return t(`enums.taskStatus.${s}`)
+}
+
+/** Select 选项集：新建弹窗与任务属性编辑共用（对称 project-status.tsx 的导出形态）。
+ * 经 hook 在组件内求值——若在模块加载期用 t() 求值会固定为初始语言、切换后不更新 */
+export function useTaskStatusOptions() {
+  const { t } = useTranslation()
+  return TASK_STATUS_ORDER.map((s) => ({
+    value: s,
+    label: t(`enums.taskStatus.${s}`),
+    icon: <TaskStatusIcon status={s} />,
+  }))
+}
 
 // 图标对齐 Linear issue 状态：backlog 虚线圈 / todo 空圈 / in_progress 半填黄 / done 实心紫✓ / canceled ✕
 export function TaskStatusIcon({ status, className }: { status: TaskStatus; className?: string }) {

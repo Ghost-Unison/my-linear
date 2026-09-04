@@ -1,11 +1,12 @@
 import { useMemo, useState } from "react"
 import { Box, Calendar, ChevronRight, Plus } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { TaskRow, TaskStatus } from "@/api/types"
 import { formatTimestamp, formatYmd, todayLocal } from "@/lib/date"
 import { cn } from "@/lib/utils"
 import { MemberAvatar } from "@/components/ui/avatar"
-import { PRIORITY_LABELS, PriorityIcon } from "@/components/ui/priority-icon"
-import { TASK_STATUS_LABELS, TASK_STATUS_ORDER, TaskStatusIcon } from "./task-status"
+import { priorityLabel, PriorityIcon } from "@/components/ui/priority-icon"
+import { taskStatusLabel, TASK_STATUS_ORDER, TaskStatusIcon } from "./task-status"
 
 /** 行内 chip 统一规格（对齐 Linear：固定高度圆角小矩形 + 边框；project / dueDate 共用） */
 const ROW_CHIP = "flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-xs"
@@ -42,6 +43,8 @@ interface TaskGroupListProps {
  * 右 = project chip（可选）+ dueDate 胶囊 + assignee 头像 + createdAt。
  */
 export function TaskGroupList({ tasks, view, onOpenTask, onNewTask, onOpenProject }: TaskGroupListProps) {
+  // 别名 tr：避免与下方多处 tasks.map((t) => ...) / for (const t of tasks) 的 TaskRow 循环变量遮蔽
+  const { t: tr } = useTranslation()
   const byId = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks])
 
   // parentId → 直接子任务（tree 视图用）；组内按 createdAt 重排：平铺数组是（status, createdAt）全局序，
@@ -129,14 +132,14 @@ export function TaskGroupList({ tasks, view, onOpenTask, onNewTask, onOpenProjec
               />
               <TaskStatusIcon status={status} />
               <span className="text-xs font-medium text-foreground">
-                {TASK_STATUS_LABELS[status]}
+                {taskStatusLabel(tr, status)}
               </span>
               {/* 计数 = 该状态任务总数（含子任务） */}
               <span className="text-xs text-muted-foreground">{countByStatus.get(status) ?? 0}</span>
               {/* 新建入口常驻显示（对齐 Linear 组头右侧 +），无标题行时它是唯一常驻入口 */}
               <button
                 type="button"
-                aria-label={`新建 ${TASK_STATUS_LABELS[status]} 任务`}
+                aria-label={tr("task.newTaskInGroup", { status: taskStatusLabel(tr, status) })}
                 onClick={(e) => {
                   e.stopPropagation()
                   onNewTask(status)
@@ -195,6 +198,7 @@ function subtreeStats(rootId: string, childrenOf: Map<string, TaskRow[]>) {
 
 /** 行右侧元信息（project chip / dueDate / assignee / createdAt），tree 与 flat 共用 */
 function RowMeta({ task, onOpenProject }: { task: TaskRow; onOpenProject?: (projectId: string) => void }) {
+  const { t } = useTranslation()
   // 逾期 = dueDate 早于今天且未完结（done/canceled 不再催）
   const overdue =
     !!task.dueDate &&
@@ -240,7 +244,7 @@ function RowMeta({ task, onOpenProject }: { task: TaskRow; onOpenProject?: (proj
         <MemberAvatar name={task.assignee.name} color={task.assignee.avatarColor || undefined} />
       ) : (
         <span
-          title="未指派"
+          title={t("task.unassigned")}
           className="size-5 shrink-0 rounded-full border border-dashed border-ink-subtle/60"
         />
       )}
@@ -269,6 +273,7 @@ function TaskTreeItem({
   onOpenTask,
   onOpenProject,
 }: TaskTreeItemProps) {
+  const { t } = useTranslation()
   const children = childrenOf.get(task.id) ?? []
   const isCollapsed = collapsed.has(task.id)
   const stats = children.length > 0 ? subtreeStats(task.id, childrenOf) : null
@@ -291,7 +296,7 @@ function TaskTreeItem({
         {children.length > 0 ? (
           <button
             type="button"
-            aria-label={isCollapsed ? "展开子任务" : "折叠子任务"}
+            aria-label={isCollapsed ? t("task.expandSubtasks") : t("task.collapseSubtasks")}
             aria-expanded={!isCollapsed}
             onClick={(e) => {
               e.stopPropagation()
@@ -306,7 +311,7 @@ function TaskTreeItem({
         ) : (
           <span className="size-4 shrink-0" aria-hidden />
         )}
-        <span title={PRIORITY_LABELS[task.priority]} className="flex shrink-0 items-center">
+        <span title={priorityLabel(t, task.priority)} className="flex shrink-0 items-center">
           <PriorityIcon value={task.priority} />
         </span>
         <TaskStatusIcon status={task.status} />
@@ -349,6 +354,7 @@ function FlatRow({
   onOpenTask: (taskId: string) => void
   onOpenProject?: (projectId: string) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div
       role="button"
@@ -360,7 +366,7 @@ function FlatRow({
     >
       {/* 与 tree 行同宽的左占位，保证优先级/状态图标纵向对齐 */}
       <span className="size-4 shrink-0" aria-hidden />
-      <span title={PRIORITY_LABELS[task.priority]} className="flex shrink-0 items-center">
+      <span title={priorityLabel(t, task.priority)} className="flex shrink-0 items-center">
         <PriorityIcon value={task.priority} />
       </span>
       <TaskStatusIcon status={task.status} />

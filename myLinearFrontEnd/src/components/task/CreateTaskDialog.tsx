@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { Box, User } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { ProjectRef, TaskStatus } from "@/api/types"
-import { errorMessage } from "@/api/client"
+import { displayError } from "@/lib/errors"
 import { useCreateTask } from "@/hooks/useTasks"
 import { useMembers } from "@/hooks/useMembers"
 import { useProjects } from "@/hooks/useProjects"
@@ -10,8 +11,8 @@ import { DIALOG_TITLE_INPUT, FormDialog } from "@/components/ui/form-dialog"
 import { memberOptions } from "@/components/ui/member-options"
 import { projectOptions } from "@/components/ui/project-options"
 import { Select } from "@/components/ui/select"
-import { PRIORITY_OPTIONS } from "@/components/ui/priority-icon"
-import { TASK_STATUS_OPTIONS } from "./task-status"
+import { usePriorityOptions } from "@/components/ui/priority-icon"
+import { useTaskStatusOptions } from "./task-status"
 
 interface CreateTaskDialogProps {
   open: boolean
@@ -34,6 +35,9 @@ export function CreateTaskDialog({
   defaultStatus = "todo",
   onClose,
 }: CreateTaskDialogProps) {
+  const { t } = useTranslation()
+  const statusOptions = useTaskStatusOptions()
+  const priorityOptions = usePriorityOptions()
   const createTask = useCreateTask(workspaceId)
   const { data: members } = useMembers(workspaceId)
   // 项目选项仅在未锁定归属时查询（任务列表页入口）；锁定时 chip 只读，选项永不渲染
@@ -44,7 +48,8 @@ export function CreateTaskDialog({
   const [assigneeId, setAssigneeId] = useState<string | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [dueDate, setDueDate] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  // 存储原始 error（ApiError / 校验 key 字符串），渲染期经 displayError 解析，切语言即时刷新
+  const [error, setError] = useState<unknown>(null)
 
   // 每次打开时重置表单（status 预选点击的分组）
   useEffect(() => {
@@ -61,13 +66,13 @@ export function CreateTaskDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
-  const assigneeOptions = memberOptions(members, "Unassigned")
+  const assigneeOptions = memberOptions(members, t("task.unassigned"))
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
     const trimmedTitle = title.trim()
     if (!trimmedTitle) {
-      setError("标题不能为空")
+      setError("validation.titleRequired")
       return
     }
     setError(null)
@@ -82,7 +87,7 @@ export function CreateTaskDialog({
       },
       {
         onSuccess: onClose,
-        onError: (err) => setError(errorMessage(err, "创建失败")),
+        onError: (err) => setError(err),
       },
     )
   }
@@ -91,16 +96,16 @@ export function CreateTaskDialog({
     <FormDialog
       open={open}
       onClose={onClose}
-      title="新建任务"
+      title={t("task.newTask")}
       onSubmit={onSubmit}
-      error={error}
+      error={displayError(t, error, "common.createFailed")}
       pending={createTask.isPending}
-      submitLabel="Create task"
+      submitLabel={t("task.createSubmit")}
       submitDisabled={!title.trim()}
     >
       <input
         value={title}
-        placeholder="Task title"
+        placeholder={t("task.titlePlaceholder")}
         autoFocus
         onChange={(e) => setTitle(e.target.value)}
         className={DIALOG_TITLE_INPUT}
@@ -108,8 +113,8 @@ export function CreateTaskDialog({
 
       {/* 属性 chip 行（对齐 Linear：Status / Priority / Assignee / Due date / Project） */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={status} options={TASK_STATUS_OPTIONS} onChange={setStatus} />
-        <Select value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
+        <Select value={status} options={statusOptions} onChange={setStatus} />
+        <Select value={priority} options={priorityOptions} onChange={setPriority} />
         <Select
           value={assigneeId ?? ""}
           options={assigneeOptions}
@@ -117,15 +122,15 @@ export function CreateTaskDialog({
           placeholder={
             <span className="inline-flex items-center gap-1.5">
               <User className="size-3.5" />
-              负责人
+              {t("task.assignee")}
             </span>
           }
         />
-        <DatePicker value={dueDate} onChange={setDueDate} placeholder="截止日期" />
+        <DatePicker value={dueDate} onChange={setDueDate} placeholder={t("task.dueDate")} />
         {/* 项目归属：锁定时只读 chip 展示；未锁定时可选（任务可不归属项目，P0.md §3） */}
         {project ? (
           <span
-            title={`任务将归属项目 ${project.name}`}
+            title={t("task.lockedProject", { name: project.name })}
             className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-ink-muted"
           >
             <Box className="size-3.5" />
@@ -134,12 +139,12 @@ export function CreateTaskDialog({
         ) : (
           <Select
             value={projectId ?? ""}
-            options={projectOptions(projects, "No project")}
+            options={projectOptions(projects, t("task.noProject"))}
             onChange={(id) => setProjectId(id || null)}
             placeholder={
               <span className="inline-flex items-center gap-1.5">
                 <Box className="size-3.5" />
-                项目
+                {t("task.project")}
               </span>
             }
           />

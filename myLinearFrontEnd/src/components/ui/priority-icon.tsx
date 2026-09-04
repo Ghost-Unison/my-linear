@@ -1,20 +1,30 @@
+import { useTranslation } from "react-i18next"
+import type { TFunction } from "i18next"
 import { cn } from "@/lib/utils"
 
-// 优先级刻度与后端一致：0 No priority / 1 Urgent / 2 High / 3 Medium / 4 Low
-export const PRIORITY_LABELS: Record<number, string> = {
-  0: "No priority",
-  1: "Urgent",
-  2: "High",
-  3: "Medium",
-  4: "Low",
+// 优先级刻度与后端一致：0 No priority / 1 Urgent / 2 High / 3 Medium / 4 Low（与语言无关）
+export const PRIORITY_VALUES: number[] = [0, 1, 2, 3, 4]
+
+/** 优先级标签：key = enums.priority.p<value> */
+export function priorityLabel(t: TFunction, p: number): string {
+  return t(`enums.priority.p${p}`)
 }
 
-/** Select 选项集：新建弹窗与属性编辑共用 */
-export const PRIORITY_OPTIONS = [0, 1, 2, 3, 4].map((p) => ({
-  value: p,
-  label: PRIORITY_LABELS[p],
-  icon: <PriorityIcon value={p} />,
-}))
+/** 优先级标签函数（组件内订阅语言变更） */
+export function usePriorityLabel(): (p: number) => string {
+  const { t } = useTranslation()
+  return (p) => t(`enums.priority.p${p}`)
+}
+
+/** Select 选项集：新建弹窗与属性编辑共用（经 hook 在组件内求值，随语言切换刷新） */
+export function usePriorityOptions() {
+  const { t } = useTranslation()
+  return PRIORITY_VALUES.map((p) => ({
+    value: p,
+    label: t(`enums.priority.p${p}`),
+    icon: <PriorityIcon value={p} />,
+  }))
+}
 
 const BAR_ACTIVE = "#d0d6e0" // ink-muted
 const BAR_INACTIVE = "#3e3e44" // hairline-tertiary

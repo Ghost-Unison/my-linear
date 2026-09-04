@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { useTranslation } from "react-i18next"
 import type { ProjectDetail, UpdateProjectInput } from "@/api/types"
 import {
   ProjectDatesEditor,
@@ -25,18 +26,19 @@ export function ProjectPropertiesPanel({
   onPatch,
   onDelete,
 }: ProjectPropertiesPanelProps) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-xs font-medium text-muted-foreground">Properties</h2>
+      <h2 className="text-xs font-medium text-muted-foreground">{t("common.properties")}</h2>
 
       <div className="flex flex-col gap-3">
-        <Row label="Status">
+        <Row label={t("common.status")}>
           <ProjectStatusEditor project={project} onPatch={onPatch} className="max-w-full" />
         </Row>
-        <Row label="Priority">
+        <Row label={t("common.priority")}>
           <ProjectPriorityEditor project={project} onPatch={onPatch} className="max-w-full" />
         </Row>
-        <Row label="Lead">
+        <Row label={t("project.lead")}>
           <ProjectLeadEditor
             project={project}
             workspaceId={workspaceId}
@@ -44,7 +46,7 @@ export function ProjectPropertiesPanel({
             className="max-w-full"
           />
         </Row>
-        <Row label="Members">
+        <Row label={t("project.members")}>
           <ProjectMembersEditor
             project={project}
             workspaceId={workspaceId}
@@ -53,7 +55,7 @@ export function ProjectPropertiesPanel({
           />
         </Row>
         {/* 两枚日期 chip 纵排：面板窄列放不下横排 */}
-        <Row label="Dates">
+        <Row label={t("project.dates")}>
           <div className="flex flex-col items-start gap-1.5">
             <ProjectDatesEditor project={project} onPatch={onPatch} />
           </div>
@@ -66,7 +68,7 @@ export function ProjectPropertiesPanel({
           onClick={onDelete}
           className="rounded px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
         >
-          Delete project
+          {t("project.deleteAction")}
         </button>
       </div>
     </div>

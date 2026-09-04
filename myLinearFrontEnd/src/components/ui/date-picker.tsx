@@ -1,8 +1,12 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react"
 import { createPortal } from "react-dom"
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight, X } from "lucide-react"
+import { useTranslation } from "react-i18next"
+import { format } from "date-fns"
+import { enUS, zhCN } from "date-fns/locale"
 import { DayPicker } from "react-day-picker"
 import { cn } from "@/lib/utils"
+import { isZhLocale } from "@/i18n"
 import { usePopover } from "./popover"
 
 /** wire 格式 YYYY-MM-DD 的解析/格式化。Date 仅作日历显示载体（本地零点），从不过线 */
@@ -44,6 +48,10 @@ interface DatePickerProps {
  */
 export function DatePicker({ value, onChange, placeholder, className }: DatePickerProps) {
   const { open, setOpen, ref, panelRef } = usePopover()
+  const { t, i18n } = useTranslation()
+  // 日历本地化：中文用 zhCN、其余用 enUS（date-fns locale 驱动月份/星期标题）
+  const isZh = isZhLocale(i18n.language)
+  const dpLocale = isZh ? zhCN : enUS
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
   const [input, setInput] = useState(value)
@@ -125,7 +133,7 @@ export function DatePicker({ value, onChange, placeholder, className }: DatePick
               <input
                 value={input}
                 autoFocus
-                aria-label="日期"
+                aria-label={t("datePicker.dateAria")}
                 placeholder="YYYY-MM-DD"
                 inputMode="numeric"
                 onChange={(e) => handleInput(e.target.value)}
@@ -137,7 +145,7 @@ export function DatePicker({ value, onChange, placeholder, className }: DatePick
                 {value && (
                   <button
                     type="button"
-                    aria-label="清除日期"
+                    aria-label={t("datePicker.clear")}
                     onClick={() => {
                       onChange("")
                       setInput("")
@@ -154,6 +162,7 @@ export function DatePicker({ value, onChange, placeholder, className }: DatePick
               mode="single"
               weekStartsOn={1}
               showOutsideDays
+              locale={dpLocale}
               month={month}
               onMonthChange={setMonth}
               selected={parseDate(value)}
@@ -164,8 +173,21 @@ export function DatePicker({ value, onChange, placeholder, className }: DatePick
                 setOpen(false)
               }}
               formatters={{
-                formatCaption: (m) => `${m.getFullYear()}年${m.getMonth() + 1}月`,
-                formatWeekdayName: (d) => "日一二三四五六"[d.getDay()],
+                formatCaption: (m) => format(m, isZh ? "yyyy年M月" : "MMM yyyy", { locale: dpLocale }),
+                formatWeekdayName: (d) => format(d, "EEEEE", { locale: dpLocale }),
+              }}
+              // 导航按钮 / 工具栏的 aria-label 默认硬编码英文，locale 不驱动，这里显式本地化
+              labels={{
+                labelNav: () => t("datePicker.nav"),
+                labelPrevious: () => t("datePicker.prevMonth"),
+                labelNext: () => t("datePicker.nextMonth"),
+                // 默认 labelDayButton 拼 "Today, " / ", selected" 英文前后缀（日期部分已随 locale），这里本地化
+                labelDayButton: (date, modifiers) => {
+                  let label = format(date, "PPPP", { locale: dpLocale })
+                  if (modifiers.today) label = t("datePicker.todayPrefix", { date: label })
+                  if (modifiers.selected) label = t("datePicker.selectedSuffix", { label })
+                  return label
+                },
               }}
               components={{
                 Chevron: ({ orientation }) =>

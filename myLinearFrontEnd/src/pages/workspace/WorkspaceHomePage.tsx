@@ -1,7 +1,9 @@
 import { useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { Plus } from "lucide-react"
 import { ApiError } from "@/api/client"
+import { translateError } from "@/lib/errors"
 import { useDeleteWorkspace, useWorkspace } from "@/hooks/useWorkspaces"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
 import { WorkspaceAvatar } from "@/components/ui/avatar"
@@ -10,14 +12,11 @@ import { ConfirmDialog } from "@/components/ui/dialog"
 import { OverviewSection } from "@/components/workspace/OverviewSection"
 import { MembersSection } from "@/components/workspace/MembersSection"
 
-const TABS = [
-  { key: "overview", label: "Overview" },
-  { key: "members", label: "Members" },
-  { key: "label", label: "Label" },
-] as const
+const TAB_KEYS = ["overview", "members", "label"] as const
 
 // /w/:workspaceId/home → 对齐 Linear Team Home：面包屑页头 + Tab 切换（Label 内容 P3 补充）
 export function WorkspaceHomePage() {
+  const { t } = useTranslation()
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -39,7 +38,7 @@ export function WorkspaceHomePage() {
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        加载中…
+        {t("common.loading")}
       </div>
     )
   }
@@ -48,7 +47,11 @@ export function WorkspaceHomePage() {
     const notFound = !error || (error instanceof ApiError && error.status === 404)
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        {notFound ? "workspace 不存在或已删除" : `加载失败：${error.message}`}
+        {notFound
+          ? t("errors.notFound.workspace")
+          : t("errors.loadFailedWithReason", {
+              reason: translateError(t, error, "errors.loadFailed"),
+            })}
       </div>
     )
   }
@@ -63,16 +66,16 @@ export function WorkspaceHomePage() {
             <h1 className="text-sm font-medium">{workspace.name}</h1>
           </>
         }
-        tabs={TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={tabPill(tab === t.key)}>
-            {t.label}
+        tabs={TAB_KEYS.map((key) => (
+          <button key={key} onClick={() => setTab(key)} className={tabPill(tab === key)}>
+            {t(`common.tabs.${key}`)}
           </button>
         ))}
         actions={
           tab === "members" ? (
             <Button variant="ghost" size="sm" onClick={() => setMemberAddOpen(true)}>
               <Plus />
-              Add a member
+              {t("workspace.addMember")}
             </Button>
           ) : undefined
         }
@@ -84,9 +87,9 @@ export function WorkspaceHomePage() {
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
             <OverviewSection key={workspace.id} workspace={workspace} />
             <section className="rounded-lg border border-destructive/40 p-6">
-              <h2 className="text-sm font-medium">删除 workspace</h2>
+              <h2 className="text-sm font-medium">{t("workspace.delete.title")}</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                将永久删除该 workspace 及其全部项目、任务与成员数据，无法恢复。
+                {t("workspace.delete.warning")}
               </p>
               <Button
                 variant="destructive"
@@ -94,7 +97,7 @@ export function WorkspaceHomePage() {
                 className="mt-4"
                 onClick={() => setConfirmOpen(true)}
               >
-                删除 workspace
+                {t("workspace.delete.action")}
               </Button>
             </section>
           </div>
@@ -108,16 +111,16 @@ export function WorkspaceHomePage() {
         )}
         {tab === "label" && (
           <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-            Label 管理将在后续阶段提供
+            {t("workspace.labelComingSoon")}
           </div>
         )}
       </div>
 
       <ConfirmDialog
         open={confirmOpen}
-        title={`删除 workspace「${workspace.name}」？`}
-        description="该操作会级联删除其下全部数据（成员、项目、任务），无法恢复。"
-        confirmText="永久删除"
+        title={t("workspace.delete.confirmTitle", { name: workspace.name })}
+        description={t("workspace.delete.confirmDesc")}
+        confirmText={t("workspace.delete.confirmButton")}
         destructive
         pending={deleteWorkspace.isPending}
         onClose={() => setConfirmOpen(false)}

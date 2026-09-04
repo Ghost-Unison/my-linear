@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react"
 import { createPortal } from "react-dom"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import { Button, PendingLabel } from "./button"
 
@@ -84,26 +85,31 @@ export function ConfirmDialog({
   open,
   title,
   description,
-  confirmText = "确认",
+  confirmText,
   destructive,
   pending,
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const { t } = useTranslation()
   return (
     <Dialog open={open} onClose={onClose}>
       <h2 className="text-base font-semibold tracking-tight">{title}</h2>
       {description && <p className="mt-2 text-sm text-muted-foreground">{description}</p>}
       <div className="mt-6 flex justify-end gap-2">
         <Button variant="secondary" onClick={onClose} disabled={pending}>
-          取消
+          {t("common.cancel")}
         </Button>
         <Button
           variant={destructive ? "destructive" : "primary"}
           onClick={onConfirm}
           disabled={pending}
         >
-          <PendingLabel pending={!!pending} label={confirmText} pendingLabel="处理中…" />
+          <PendingLabel
+            pending={!!pending}
+            label={confirmText ?? t("common.confirm")}
+            pendingLabel={t("common.processing")}
+          />
         </Button>
       </div>
     </Dialog>

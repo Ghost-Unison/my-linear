@@ -1,17 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react"
 import { User, Users } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { ProjectStatus } from "@/api/types"
-import { errorMessage } from "@/api/client"
+import { displayError } from "@/lib/errors"
 import { useCreateProject } from "@/hooks/useProjects"
 import { useMembers } from "@/hooks/useMembers"
 import { DatePicker } from "@/components/ui/date-picker"
 import { DIALOG_TITLE_INPUT, FormDialog } from "@/components/ui/form-dialog"
 import { memberOptions } from "@/components/ui/member-options"
 import { MultiSelect, Select } from "@/components/ui/select"
-import { PRIORITY_OPTIONS } from "@/components/ui/priority-icon"
-import { PROJECT_STATUS_OPTIONS } from "@/components/project/project-status"
+import { usePriorityOptions } from "@/components/ui/priority-icon"
+import { useProjectStatusOptions } from "@/components/project/project-status"
 
-// 选项集复用 priority-icon / project-status 导出的共享常量（与详情属性编辑器同源）
+// 选项集经 hook 复用 priority-icon / project-status（与详情属性编辑器同源，随语言切换刷新）
 
 /**
  * 新建项目弹窗（对齐 Linear New project，见 P0.md §2）：
@@ -27,6 +28,9 @@ export function CreateProjectDialog({
   workspaceId: string
   onClose: () => void
 }) {
+  const { t } = useTranslation()
+  const statusOptions = useProjectStatusOptions()
+  const priorityOptions = usePriorityOptions()
   const createProject = useCreateProject(workspaceId)
   const { data: members } = useMembers(workspaceId)
   const [name, setName] = useState("")
@@ -37,7 +41,8 @@ export function CreateProjectDialog({
   const [memberIds, setMemberIds] = useState<string[]>([])
   const [startDate, setStartDate] = useState("")
   const [targetDate, setTargetDate] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  // 存储原始 error（ApiError / 校验 key 字符串），渲染期经 displayError 解析，切语言即时刷新
+  const [error, setError] = useState<unknown>(null)
 
   // 每次打开时重置表单（默认值见上方约定）
   useEffect(() => {
@@ -61,7 +66,7 @@ export function CreateProjectDialog({
     if (next) setMemberIds((prev) => prev.filter((m) => m !== next))
   }
 
-  const leadOptions = memberOptions(members, "No lead")
+  const leadOptions = memberOptions(members, t("project.noLead"))
   // members 选项排除当前 lead
   const memberOptionsExclLead = memberOptions(members?.filter((m) => m.id !== leadId))
 
@@ -69,7 +74,7 @@ export function CreateProjectDialog({
     e.preventDefault()
     const trimmedName = name.trim()
     if (!trimmedName) {
-      setError("名称不能为空")
+      setError("validation.nameRequired")
       return
     }
     setError(null)
@@ -87,7 +92,7 @@ export function CreateProjectDialog({
       },
       {
         onSuccess: onClose,
-        onError: (err) => setError(errorMessage(err, "创建失败")),
+        onError: (err) => setError(err),
       },
     )
   }
@@ -96,16 +101,16 @@ export function CreateProjectDialog({
     <FormDialog
       open={open}
       onClose={onClose}
-      title="新建项目"
+      title={t("project.newProject")}
       onSubmit={onSubmit}
-      error={error}
+      error={displayError(t, error, "common.createFailed")}
       pending={createProject.isPending}
-      submitLabel="Create project"
+      submitLabel={t("project.createSubmit")}
       submitDisabled={!name.trim()}
     >
       <input
         value={name}
-        placeholder="Project name"
+        placeholder={t("project.namePlaceholder")}
         autoFocus
         onChange={(e) => setName(e.target.value)}
         className={DIALOG_TITLE_INPUT}
@@ -113,8 +118,8 @@ export function CreateProjectDialog({
 
       {/* 属性 chip 行（对齐 Linear：Backlog / No priority / Lead / Members / Start / Target） */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={status} options={PROJECT_STATUS_OPTIONS} onChange={setStatus} />
-        <Select value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
+        <Select value={status} options={statusOptions} onChange={setStatus} />
+        <Select value={priority} options={priorityOptions} onChange={setPriority} />
         <Select
           value={leadId ?? ""}
           options={leadOptions}
@@ -122,7 +127,7 @@ export function CreateProjectDialog({
           placeholder={
             <span className="inline-flex items-center gap-1.5">
               <User className="size-3.5" />
-              负责人
+              {t("project.lead")}
             </span>
           }
         />
@@ -133,17 +138,17 @@ export function CreateProjectDialog({
           placeholder={
             <span className="inline-flex items-center gap-1.5">
               <Users className="size-3.5" />
-              成员
+              {t("project.members")}
             </span>
           }
         />
-        <DatePicker value={startDate} onChange={setStartDate} placeholder="开始日期" />
-        <DatePicker value={targetDate} onChange={setTargetDate} placeholder="截止日期" />
+        <DatePicker value={startDate} onChange={setStartDate} placeholder={t("project.startDate")} />
+        <DatePicker value={targetDate} onChange={setTargetDate} placeholder={t("project.targetDate")} />
       </div>
 
       <textarea
         value={description}
-        placeholder="Write a description, a project brief, or collect ideas..."
+        placeholder={t("project.descPlaceholder")}
         onChange={(e) => setDescription(e.target.value)}
         className="min-h-36 w-full resize-none bg-transparent text-sm text-foreground placeholder:text-ink-tertiary focus-visible:outline-none"
       />

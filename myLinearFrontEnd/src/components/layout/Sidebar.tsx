@@ -1,13 +1,16 @@
 import { useEffect, useState } from "react"
 import { Link, NavLink, useParams } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { ChevronRight, Folder, Home, ListTodo, Plus } from "lucide-react"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { cn } from "@/lib/utils"
 import { WorkspaceAvatar } from "@/components/ui/avatar"
+import { LanguageSwitcher } from "@/components/layout/LanguageSwitcher"
 import type { Workspace } from "@/api/types"
 
 // 左侧栏：workspace 可展开导航树（Home/Projects/Tasks），见 P0.md §0；Views 入口 P1 才展示
 export function Sidebar() {
+  const { t } = useTranslation()
   const { data: workspaces, isLoading } = useWorkspaces()
   const { workspaceId: activeId } = useParams()
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
@@ -36,10 +39,10 @@ export function Sidebar() {
       </div>
 
       <div className="flex items-center justify-between px-3 pb-1 pt-2">
-        <span className="text-xs font-medium text-muted-foreground">Workspaces</span>
+        <span className="text-xs font-medium text-muted-foreground">{t("nav.workspaces")}</span>
         <Link
           to="/w/new"
-          title="新建 workspace"
+          title={t("nav.newWorkspace")}
           className="flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <Plus className="size-4" />
@@ -47,9 +50,11 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 pb-4">
-        {isLoading && <p className="px-2 py-1 text-xs text-muted-foreground">加载中…</p>}
+        {isLoading && (
+          <p className="px-2 py-1 text-xs text-muted-foreground">{t("common.loading")}</p>
+        )}
         {!isLoading && workspaces?.length === 0 && (
-          <p className="px-2 py-1 text-xs text-muted-foreground">还没有 workspace，点击 + 创建</p>
+          <p className="px-2 py-1 text-xs text-muted-foreground">{t("nav.emptyWorkspaces")}</p>
         )}
         {workspaces?.map((ws) => (
           <WorkspaceNode
@@ -60,6 +65,11 @@ export function Sidebar() {
           />
         ))}
       </nav>
+
+      {/* 侧栏底部：语言切换（EN / 中），持久化到 localStorage */}
+      <div className="border-t border-border px-3 py-3">
+        <LanguageSwitcher />
+      </div>
     </aside>
   )
 }
@@ -73,10 +83,11 @@ function WorkspaceNode({
   expanded: boolean
   onToggle: () => void
 }) {
+  const { t } = useTranslation()
   const items = [
-    { to: `/w/${workspace.id}/home`, label: "Home", icon: Home },
-    { to: `/w/${workspace.id}/projects`, label: "Projects", icon: Folder },
-    { to: `/w/${workspace.id}/tasks`, label: "Tasks", icon: ListTodo },
+    { to: `/w/${workspace.id}/home`, label: t("nav.home"), icon: Home },
+    { to: `/w/${workspace.id}/projects`, label: t("nav.projects"), icon: Folder },
+    { to: `/w/${workspace.id}/tasks`, label: t("nav.tasks"), icon: ListTodo },
   ]
 
   return (
@@ -84,7 +95,7 @@ function WorkspaceNode({
       <div className="flex h-8 items-center gap-0.5 rounded-md pr-1 text-sm text-muted-foreground hover:bg-accent/60 hover:text-foreground">
         <button
           onClick={onToggle}
-          aria-label={expanded ? "折叠" : "展开"}
+          aria-label={expanded ? t("common.collapse") : t("common.expand")}
           aria-expanded={expanded}
           className="flex size-6 shrink-0 items-center justify-center rounded-md"
         >

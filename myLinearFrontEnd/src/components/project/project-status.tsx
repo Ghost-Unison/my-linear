@@ -1,15 +1,8 @@
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 import type { ProjectStatus } from "@/api/types"
 
-export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
-  backlog: "Backlog",
-  planned: "Planned",
-  in_progress: "In Progress",
-  completed: "Completed",
-  canceled: "Canceled",
-}
-
-/** 展示/选项顺序 = 业务生命周期序（对齐后端 projectStatusRank，非字典序） */
+/** 展示/选项顺序 = 业务生命周期序（对齐后端 projectStatusRank，非字典序）；与语言无关 */
 export const PROJECT_STATUS_ORDER: readonly ProjectStatus[] = [
   "backlog",
   "planned",
@@ -18,12 +11,21 @@ export const PROJECT_STATUS_ORDER: readonly ProjectStatus[] = [
   "canceled",
 ]
 
-/** Select 选项集：新建弹窗与详情属性编辑共用 */
-export const PROJECT_STATUS_OPTIONS = PROJECT_STATUS_ORDER.map((s) => ({
-  value: s,
-  label: PROJECT_STATUS_LABELS[s],
-  icon: <ProjectStatusIcon status={s} />,
-}))
+/** 状态标签函数（组件内订阅语言变更）：key = enums.projectStatus.<status> */
+export function useProjectStatusLabel(): (s: ProjectStatus) => string {
+  const { t } = useTranslation()
+  return (s) => t(`enums.projectStatus.${s}`)
+}
+
+/** Select 选项集：新建弹窗与详情属性编辑共用（经 hook 在组件内求值，随语言切换刷新） */
+export function useProjectStatusOptions() {
+  const { t } = useTranslation()
+  return PROJECT_STATUS_ORDER.map((s) => ({
+    value: s,
+    label: t(`enums.projectStatus.${s}`),
+    icon: <ProjectStatusIcon status={s} />,
+  }))
+}
 
 // 状态图标对齐 Linear：圆环填充度即进度隐喻（虚线 → 空心 → 半填 → 全填✓）；取消 = ✕
 export function ProjectStatusIcon({

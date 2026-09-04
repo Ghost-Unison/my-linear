@@ -1,6 +1,7 @@
 import { Fragment } from "react"
 import { Link } from "react-router-dom"
 import { ChevronRight } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { cn } from "@/lib/utils"
 
 export interface BreadcrumbItem {
@@ -20,8 +21,9 @@ export function Breadcrumb({
   items: BreadcrumbItem[]
   className?: string
 }) {
+  const { t } = useTranslation()
   return (
-    <nav aria-label="面包屑" className={cn("flex min-w-0 items-center gap-1 text-sm", className)}>
+    <nav aria-label={t("breadcrumb.aria")} className={cn("flex min-w-0 items-center gap-1 text-sm", className)}>
       {items.map((item, i) => {
         const last = i === items.length - 1
         return (

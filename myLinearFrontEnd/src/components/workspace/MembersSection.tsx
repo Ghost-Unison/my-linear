@@ -1,7 +1,8 @@
 import { useEffect, useState, type FormEvent, type KeyboardEvent } from "react"
+import { useTranslation } from "react-i18next"
 import { Pencil, Trash2 } from "lucide-react"
 import type { Member, UpdateMemberInput } from "@/api/types"
-import { errorMessage } from "@/api/client"
+import { displayError } from "@/lib/errors"
 import {
   useCreateMember,
   useDeleteMember,
@@ -31,6 +32,7 @@ export function MembersSection({
   addOpen?: boolean
   onAddOpenChange?: (open: boolean) => void
 }) {
+  const { t } = useTranslation()
   const { data: members, isLoading, isError, error } = useMembers(workspaceId)
   const deleteMember = useDeleteMember(workspaceId)
   const [addingInner, setAddingInner] = useState(false)
@@ -47,17 +49,19 @@ export function MembersSection({
   return (
     <section>
       <div className={`grid ${ROW_GRID} gap-4 border-b border-border pb-2 text-xs font-medium text-muted-foreground`}>
-        <span>Name</span>
-        <span>Email</span>
+        <span>{t("member.nameCol")}</span>
+        <span>{t("member.emailCol")}</span>
         <span />
       </div>
 
-      {isLoading && <p className="py-4 text-sm text-muted-foreground">加载中…</p>}
-      {isError && <p className="py-4 text-sm text-destructive">{error.message}</p>}
-      {!isLoading && members?.length === 0 && (
-        <p className="py-4 text-sm text-muted-foreground">
-          暂无成员。成员是“责任人名片”，用于任务指派与项目负责。点击右上角 Add a member 创建。
+      {isLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
+      {isError && (
+        <p className="py-4 text-sm text-destructive">
+          {displayError(t, error, "errors.loadFailed")}
         </p>
+      )}
+      {!isLoading && members?.length === 0 && (
+        <p className="py-4 text-sm text-muted-foreground">{t("member.empty")}</p>
       )}
 
       {members?.map((m) =>
@@ -83,7 +87,7 @@ export function MembersSection({
               <Button
                 variant="ghost"
                 size="icon"
-                title="编辑成员"
+                title={t("member.edit")}
                 onClick={() => setEditingId(m.id)}
               >
                 <Pencil />
@@ -91,7 +95,7 @@ export function MembersSection({
               <Button
                 variant="ghost"
                 size="icon"
-                title="删除成员"
+                title={t("member.delete")}
                 onClick={() => {
                   setDeleting(m)
                   setDeleteOpen(true)
@@ -112,9 +116,9 @@ export function MembersSection({
 
       <ConfirmDialog
         open={deleteOpen}
-        title={`删除成员「${deleting?.name ?? ""}」？`}
-        description="其名下任务的 assignee 与项目 lead 将自动变为未指派。"
-        confirmText="删除"
+        title={t("member.deleteConfirmTitle", { name: deleting?.name ?? "" })}
+        description={t("member.deleteConfirmDesc")}
+        confirmText={t("common.delete")}
         destructive
         pending={deleteMember.isPending}
         onClose={() => setDeleteOpen(false)}
@@ -137,11 +141,12 @@ function CreateMemberDialog({
   workspaceId: string
   onClose: () => void
 }) {
+  const { t } = useTranslation()
   const createMember = useCreateMember(workspaceId)
   const [name, setName] = useState("")
   const [email, setEmail] = useState("")
   const [color, setColor] = useState<string>(AVATAR_PALETTE[0])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
   // 每次打开时重置表单
   useEffect(() => {
@@ -157,7 +162,7 @@ function CreateMemberDialog({
     e.preventDefault()
     const trimmedName = name.trim()
     if (!trimmedName) {
-      setError("名称不能为空")
+      setError("validation.nameRequired")
       return
     }
     setError(null)
@@ -170,43 +175,45 @@ function CreateMemberDialog({
       },
       {
         onSuccess: onClose,
-        onError: (err) => setError(errorMessage(err, "创建失败")),
+        onError: (err) => setError(err),
       },
     )
   }
 
+  const errorText = displayError(t, error, "common.createFailed")
+
   return (
     <Dialog open={open} onClose={onClose}>
-      <h2 className="text-base font-semibold tracking-tight">添加成员</h2>
+      <h2 className="text-base font-semibold tracking-tight">{t("member.addTitle")}</h2>
       <form onSubmit={onSubmit} className="mt-4 flex flex-col gap-4">
         <div className="flex flex-col gap-1.5">
           <label htmlFor="cm-name" className="text-xs font-medium text-muted-foreground">
-            名称
+            {t("common.name")}
           </label>
           <Input
             id="cm-name"
             value={name}
-            placeholder="成员名称"
+            placeholder={t("member.namePlaceholder")}
             autoFocus
             onChange={(e) => setName(e.target.value)}
           />
         </div>
         <div className="flex flex-col gap-1.5">
           <label htmlFor="cm-email" className="text-xs font-medium text-muted-foreground">
-            Email（可选）
+            {t("member.emailOptional")}
           </label>
           <Input
             id="cm-email"
             value={email}
-            placeholder="name@example.com"
+            placeholder={t("member.emailPlaceholder")}
             onChange={(e) => setEmail(e.target.value)}
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs font-medium text-muted-foreground">头像颜色</span>
+          <span className="text-xs font-medium text-muted-foreground">{t("member.avatarColor")}</span>
           <ColorSwatchPicker value={color} onChange={setColor} />
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {errorText && <p className="text-sm text-destructive">{errorText}</p>}
         <div className="mt-2 flex justify-end gap-2">
           <Button
             type="button"
@@ -214,10 +221,14 @@ function CreateMemberDialog({
             onClick={onClose}
             disabled={createMember.isPending}
           >
-            取消
+            {t("common.cancel")}
           </Button>
           <Button type="submit" disabled={createMember.isPending || !name.trim()}>
-            <PendingLabel pending={createMember.isPending} label="添加" pendingLabel="添加中…" />
+            <PendingLabel
+              pending={createMember.isPending}
+              label={t("common.add")}
+              pendingLabel={t("common.adding")}
+            />
           </Button>
         </div>
       </form>
@@ -235,16 +246,17 @@ function EditMemberRow({
   initial: Member
   onDone: () => void
 }) {
+  const { t } = useTranslation()
   const updateMember = useUpdateMember(workspaceId)
   const [name, setName] = useState(initial.name)
   const [email, setEmail] = useState(initial.email ?? "")
   const [color, setColor] = useState(initial.avatarColor || AVATAR_PALETTE[0])
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
   const onSubmit = () => {
     const trimmedName = name.trim()
     if (!trimmedName) {
-      setError("名称不能为空")
+      setError("validation.nameRequired")
       return
     }
     setError(null)
@@ -263,10 +275,12 @@ function EditMemberRow({
       { memberId: initial.id, input },
       {
         onSuccess: onDone,
-        onError: (err) => setError(errorMessage(err, "保存失败")),
+        onError: (err) => setError(err),
       },
     )
   }
+
+  const errorText = displayError(t, error, "common.saveFailed")
 
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter") onSubmit()
@@ -280,7 +294,7 @@ function EditMemberRow({
           <MemberAvatar name={name || "?"} color={color} />
           <Input
             value={name}
-            placeholder="名称（必填）"
+            placeholder={t("member.nameRequired")}
             autoFocus
             onChange={(e) => setName(e.target.value)}
             onKeyDown={onKeyDown}
@@ -288,23 +302,23 @@ function EditMemberRow({
         </span>
         <Input
           value={email}
-          placeholder="Email（可选）"
+          placeholder={t("member.emailOptional")}
           onChange={(e) => setEmail(e.target.value)}
           onKeyDown={onKeyDown}
         />
         <span className="flex items-center justify-end gap-1">
           <Button size="sm" onClick={onSubmit} disabled={updateMember.isPending}>
-            保存
+            {t("common.save")}
           </Button>
           <Button size="sm" variant="ghost" onClick={onDone}>
-            取消
+            {t("common.cancel")}
           </Button>
         </span>
       </div>
       <div className="mt-2.5 pl-7">
         <ColorSwatchPicker value={color} onChange={setColor} />
       </div>
-      {error && <p className="mt-2 pl-7 text-sm text-destructive">{error}</p>}
+      {errorText && <p className="mt-2 pl-7 text-sm text-destructive">{errorText}</p>}
     </div>
   )
 }

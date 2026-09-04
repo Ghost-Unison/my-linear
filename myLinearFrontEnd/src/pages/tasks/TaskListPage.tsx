@@ -1,8 +1,9 @@
 import { useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Plus } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { TaskFilter, TaskStatus } from "@/api/types"
-import { errorMessage } from "@/api/client"
+import { displayError } from "@/lib/errors"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useWorkspaceTasks } from "@/hooks/useTasks"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
@@ -11,16 +12,13 @@ import { Button } from "@/components/ui/button"
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog"
 import { TaskGroupList } from "@/components/task/TaskGroupList"
 
-// 顶部固定筛选 tab（P0.md §3）：Active = todo + in_progress（api.md §8）
-const FILTERS: { key: TaskFilter; label: string }[] = [
-  { key: "active", label: "Active" },
-  { key: "backlog", label: "Backlog" },
-  { key: "all", label: "All" },
-]
+// 顶部固定筛选 tab（P0.md §3）：Active = todo + in_progress（api.md §8）；label 经 i18n 求值
+const FILTER_KEYS: TaskFilter[] = ["active", "backlog", "all"]
 
 // /w/:workspaceId/tasks → 任务列表（按状态分组 + 树形子任务，见 P0.md §3）
 // 结构对齐 Linear：面包屑行 → 筛选 tab 行（右侧 New task）→ 分组列表
 export function TaskListPage() {
+  const { t } = useTranslation()
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -41,38 +39,41 @@ export function TaskListPage() {
     setCreateOpen(true)
   }
 
-  const workspaceName = workspaces?.find((w) => w.id === workspaceId)?.name ?? "Workspace"
+  const workspaceName =
+    workspaces?.find((w) => w.id === workspaceId)?.name ?? t("common.workspaceFallback")
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title={
           <Breadcrumb
-            items={[{ label: workspaceName, to: `/w/${workspaceId}/home` }, { label: "Tasks" }]}
+            items={[{ label: workspaceName, to: `/w/${workspaceId}/home` }, { label: t("nav.tasks") }]}
           />
         }
-        tabs={FILTERS.map((f) => (
-          <button key={f.key} onClick={() => setFilter(f.key)} className={tabPill(filter === f.key)}>
-            {f.label}
+        tabs={FILTER_KEYS.map((key) => (
+          <button key={key} onClick={() => setFilter(key)} className={tabPill(filter === key)}>
+            {t(`enums.taskFilter.${key}`)}
           </button>
         ))}
         actions={
           // 与 New project / Add a member 同款 ghost 按钮
           <Button variant="ghost" size="sm" onClick={() => openCreate("todo")}>
             <Plus />
-            New task
+            {t("task.newTask")}
           </Button>
         }
       />
 
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 scrollbar-gutter-stable">
-        {isLoading && <p className="py-4 text-sm text-muted-foreground">加载中…</p>}
+        {isLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
         {isError && (
-          <p className="py-4 text-sm text-destructive">{errorMessage(error, "任务加载失败")}</p>
+          <p className="py-4 text-sm text-destructive">
+            {displayError(t, error, "task.loadFailed")}
+          </p>
         )}
         {!isLoading && !isError && (tasks?.length ?? 0) === 0 && (
           <div className="rounded-lg border border-dashed border-border p-10 text-center">
-            <p className="text-sm text-muted-foreground">该筛选下还没有任务</p>
+            <p className="text-sm text-muted-foreground">{t("task.emptyFilter")}</p>
             <Button
               variant="secondary"
               size="sm"
@@ -80,7 +81,7 @@ export function TaskListPage() {
               onClick={() => openCreate(filter === "backlog" ? "backlog" : "todo")}
             >
               <Plus />
-              New task
+              {t("task.newTask")}
             </Button>
           </div>
         )}

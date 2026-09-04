@@ -1,11 +1,12 @@
 import { User, Users } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import type { ProjectDetail, ProjectStatus, UpdateProjectInput } from "@/api/types"
 import { useMembers } from "@/hooks/useMembers"
 import { DatePicker } from "@/components/ui/date-picker"
 import { memberOptions } from "@/components/ui/member-options"
 import { MultiSelect, Select } from "@/components/ui/select"
-import { PRIORITY_OPTIONS } from "@/components/ui/priority-icon"
-import { PROJECT_STATUS_OPTIONS } from "./project-status"
+import { usePriorityOptions } from "@/components/ui/priority-icon"
+import { useProjectStatusOptions } from "./project-status"
 
 /**
  * 项目属性 chip 编辑器集合：overview 的 Properties 行与右侧面板共用（Linear 式双呈现）。
@@ -24,10 +25,11 @@ interface ChipEditorProps extends ProjectEditorProps {
 }
 
 export function ProjectStatusEditor({ project, onPatch, className }: ChipEditorProps) {
+  const options = useProjectStatusOptions()
   return (
     <Select<ProjectStatus>
       value={project.status}
-      options={PROJECT_STATUS_OPTIONS}
+      options={options}
       onChange={(status) => onPatch({ status })}
       className={className}
     />
@@ -35,10 +37,11 @@ export function ProjectStatusEditor({ project, onPatch, className }: ChipEditorP
 }
 
 export function ProjectPriorityEditor({ project, onPatch, className }: ChipEditorProps) {
+  const options = usePriorityOptions()
   return (
     <Select
       value={project.priority}
-      options={PRIORITY_OPTIONS}
+      options={options}
       onChange={(priority) => onPatch({ priority })}
       className={className}
     />
@@ -50,11 +53,12 @@ interface LeadEditorProps extends ChipEditorProps {
 }
 
 export function ProjectLeadEditor({ project, workspaceId, onPatch, className }: LeadEditorProps) {
+  const { t } = useTranslation()
   const { data: members } = useMembers(workspaceId)
   return (
     <Select
       value={project.lead?.id ?? ""}
-      options={memberOptions(members, "No lead")}
+      options={memberOptions(members, t("project.noLead"))}
       className={className}
       onChange={(leadId) => {
         if (!leadId) {
@@ -75,7 +79,7 @@ export function ProjectLeadEditor({ project, workspaceId, onPatch, className }: 
       placeholder={
         <span className="inline-flex items-center gap-1.5">
           <User className="size-3.5" />
-          负责人
+          {t("project.lead")}
         </span>
       }
     />
@@ -92,6 +96,7 @@ export function ProjectMembersEditor({
   onPatch,
   className,
 }: MembersEditorProps) {
+  const { t } = useTranslation()
   const { data: members } = useMembers(workspaceId)
   // 选项排除 lead（R2）；value 同步过滤，防御历史脏数据触发后端 400
   return (
@@ -105,7 +110,7 @@ export function ProjectMembersEditor({
       placeholder={
         <span className="inline-flex items-center gap-1.5">
           <Users className="size-3.5" />
-          成员
+          {t("project.members")}
         </span>
       }
     />
@@ -114,17 +119,18 @@ export function ProjectMembersEditor({
 
 /** 开始/截止两枚日期 chip：清空 = 显式 null（api.md §1 PATCH 语义） */
 export function ProjectDatesEditor({ project, onPatch }: ProjectEditorProps) {
+  const { t } = useTranslation()
   return (
     <>
       <DatePicker
         value={project.startDate ?? ""}
         onChange={(v) => onPatch({ startDate: v || null })}
-        placeholder="开始日期"
+        placeholder={t("project.startDate")}
       />
       <DatePicker
         value={project.targetDate ?? ""}
         onChange={(v) => onPatch({ targetDate: v || null })}
-        placeholder="截止日期"
+        placeholder={t("project.targetDate")}
       />
     </>
   )

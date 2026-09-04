@@ -34,8 +34,3 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
-
-/** 统一错误文案：ApiError 取后端 message，其余（断网 TypeError 等）回退 fallback */
-export function errorMessage(err: unknown, fallback: string): string {
-  return err instanceof ApiError ? err.message : fallback
-}

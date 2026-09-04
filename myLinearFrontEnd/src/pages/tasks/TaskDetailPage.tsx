@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { Box, Calendar, ChevronRight, Circle, PanelRight, Plus, User, X } from "lucide-react"
 import type { ParentRef, TaskDetail, TaskNode, TaskStatus, UpdateTaskInput } from "@/api/types"
-import { ApiError, errorMessage } from "@/api/client"
+import { ApiError } from "@/api/client"
+import { displayError, translateError } from "@/lib/errors"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useMembers } from "@/hooks/useMembers"
 import { useCreateTask, useDeleteTask, useTask, useTaskSubtree, useUpdateTask } from "@/hooks/useTasks"
@@ -15,7 +17,7 @@ import { MemberAvatar } from "@/components/ui/avatar"
 import { DatePicker } from "@/components/ui/date-picker"
 import { ConfirmDialog } from "@/components/ui/dialog"
 import { memberOptions } from "@/components/ui/member-options"
-import { PRIORITY_LABELS, PRIORITY_OPTIONS, PriorityIcon } from "@/components/ui/priority-icon"
+import { PriorityIcon, usePriorityLabel, usePriorityOptions } from "@/components/ui/priority-icon"
 import { Select } from "@/components/ui/select"
 import { TaskPropertiesPanel } from "@/components/task/TaskPropertiesPanel"
 import {
@@ -25,7 +27,7 @@ import {
   TaskProjectEditor,
   TaskStatusEditor,
 } from "@/components/task/TaskPropertyEditors"
-import { TASK_STATUS_OPTIONS, TaskStatusIcon } from "@/components/task/task-status"
+import { TaskStatusIcon, useTaskStatusOptions } from "@/components/task/task-status"
 
 /** 行内 chip 统一规格（对齐 Linear，与 TaskGroupList 一致） */
 const ROW_CHIP = "flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 text-xs"
@@ -36,6 +38,7 @@ const PANEL_KEY = "myLinear:task-panel-open"
 // /w/:workspaceId/tasks/:taskId → 任务详情（P0.md §3）：
 // 标题/描述就地编辑 + 属性 chip 行（与右侧面板双呈现）+ Sub-issues 子任务区（树形 + 行内创建）
 export function TaskDetailPage() {
+  const { t } = useTranslation()
   const { workspaceId, taskId } = useParams<{ workspaceId: string; taskId: string }>()
   const navigate = useNavigate()
   const { data: workspaces } = useWorkspaces()
@@ -65,19 +68,20 @@ export function TaskDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // chip/标题/描述编辑共用的 PATCH 入口：统一错误上浮到页内横幅
-  const [editError, setEditError] = useState<string | null>(null)
+  const [editError, setEditError] = useState<unknown>(null)
   const patch = (input: UpdateTaskInput) => {
     setEditError(null)
     updateTask.mutate(
       { taskId: taskId!, input },
-      { onError: (err) => setEditError(errorMessage(err, "保存失败")) },
+      { onError: (err) => setEditError(err) },
     )
   }
+  const editErrorText = displayError(t, editError, "common.saveFailed")
 
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        加载中…
+        {t("common.loading")}
       </div>
     )
   }
@@ -85,12 +89,17 @@ export function TaskDetailPage() {
     const notFound = !error || (error instanceof ApiError && error.status === 404)
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        {notFound ? "任务不存在或已删除" : `加载失败：${error!.message}`}
+        {notFound
+          ? t("errors.notFound.task")
+          : t("errors.loadFailedWithReason", {
+              reason: translateError(t, error, "errors.loadFailed"),
+            })}
       </div>
     )
   }
 
-  const workspaceName = workspaces?.find((w) => w.id === workspaceId)?.name ?? "Workspace"
+  const workspaceName =
+    workspaces?.find((w) => w.id === workspaceId)?.name ?? t("common.workspaceFallback")
 
   return (
     <div className="flex h-full flex-col">
@@ -100,7 +109,7 @@ export function TaskDetailPage() {
           <Breadcrumb
             items={[
               { label: workspaceName, to: `/w/${workspaceId}/home` },
-              { label: "Tasks", to: `/w/${workspaceId}/tasks` },
+              { label: t("nav.tasks"), to: `/w/${workspaceId}/tasks` },
               { label: task.title },
             ]}
           />
@@ -109,8 +118,8 @@ export function TaskDetailPage() {
           <button
             type="button"
             onClick={togglePanel}
-            aria-label={panelOpen ? "收起属性面板" : "展开属性面板"}
-            title={panelOpen ? "收起属性面板" : "展开属性面板"}
+            aria-label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
+            title={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
             className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <PanelRight className="size-4" />
@@ -119,12 +128,12 @@ export function TaskDetailPage() {
       />
 
       {/* 编辑失败横幅（chip 即点即存的统一错误出口） */}
-      {editError && (
+      {editErrorText && (
         <div className="flex shrink-0 items-center justify-between border-b border-destructive/30 bg-destructive/10 px-6 py-1.5 text-xs text-destructive">
-          <span>{editError}</span>
+          <span>{editErrorText}</span>
           <button
             type="button"
-            aria-label="关闭错误提示"
+            aria-label={t("common.closeError")}
             onClick={() => setEditError(null)}
             className="flex size-5 items-center justify-center rounded hover:bg-destructive/20"
           >
@@ -148,7 +157,9 @@ export function TaskDetailPage() {
             </div>
 
             <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-              <span className="pt-1.5 text-xs font-medium text-muted-foreground">Properties</span>
+              <span className="pt-1.5 text-xs font-medium text-muted-foreground">
+                {t("common.properties")}
+              </span>
               <div className="flex flex-wrap items-center gap-2">
                 <TaskStatusEditor task={task} onPatch={patch} />
                 <TaskPriorityEditor task={task} onPatch={patch} />
@@ -159,12 +170,16 @@ export function TaskDetailPage() {
             </div>
 
             <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-              <span className="pt-1.5 text-xs font-medium text-muted-foreground">Description</span>
+              <span className="pt-1.5 text-xs font-medium text-muted-foreground">
+                {t("common.description")}
+              </span>
               <TaskDescriptionEditor task={task} onPatch={patch} />
             </div>
 
             <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-              <span className="pt-1.5 text-xs font-medium text-muted-foreground">Sub-issues</span>
+              <span className="pt-1.5 text-xs font-medium text-muted-foreground">
+                {t("task.subIssues")}
+              </span>
               <SubIssuesSection
                 task={task}
                 subtree={subtree ?? []}
@@ -197,9 +212,9 @@ export function TaskDetailPage() {
 
       <ConfirmDialog
         open={confirmDelete}
-        title={`删除任务「${task.title}」？`}
-        description="任务将被软删除，其整棵子任务树将一并删除。"
-        confirmText="删除任务"
+        title={t("task.deleteConfirmTitle", { title: task.title })}
+        description={t("task.deleteConfirmDesc")}
+        confirmText={t("task.deleteConfirmButton")}
         destructive
         pending={deleteTask.isPending}
         onClose={() => setConfirmDelete(false)}
@@ -221,9 +236,10 @@ export function TaskDetailPage() {
 
 /** 子任务详情页标题下 "Sub-issue of" 行（对齐 Linear）：父任务状态图标 + 标题（点击跳转）+ 后代完成徽标 */
 function SubIssueOfLine({ parent, onOpen }: { parent: ParentRef; onOpen: () => void }) {
+  const { t } = useTranslation()
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="shrink-0">Sub-issue of</span>
+      <span className="shrink-0">{t("task.subIssueOf")}</span>
       <button
         type="button"
         onClick={onOpen}
@@ -248,6 +264,7 @@ function TaskTitleEditor({
   task: TaskDetail
   onPatch: (input: UpdateTaskInput) => void
 }) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(task.title)
   useEffect(() => setValue(task.title), [task.title])
@@ -275,7 +292,7 @@ function TaskTitleEditor({
           if (e.key === "Enter") commit()
           if (e.key === "Escape") revert()
         }}
-        aria-label="任务标题"
+        aria-label={t("task.titleAria")}
         className="w-full bg-transparent text-2xl font-medium tracking-tight text-foreground focus-visible:outline-none"
       />
     )
@@ -283,7 +300,7 @@ function TaskTitleEditor({
   return (
     <h1
       onClick={() => setEditing(true)}
-      title="点击编辑标题"
+      title={t("task.clickEditTitle")}
       className="cursor-text wrap-break-word text-2xl font-medium tracking-tight text-foreground"
     >
       {task.title}
@@ -298,6 +315,7 @@ function TaskDescriptionEditor({
   task: TaskDetail
   onPatch: (input: UpdateTaskInput) => void
 }) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(task.description)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -329,13 +347,13 @@ function TaskDescriptionEditor({
         autoFocus
         rows={1}
         value={value}
-        placeholder="Add description..."
+        placeholder={t("common.addDescription")}
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Escape") revert()
         }}
-        aria-label="任务描述"
+        aria-label={t("task.descAria")}
         className="min-h-9 w-full resize-none overflow-hidden bg-transparent px-2 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-ink-tertiary focus-visible:outline-none"
       />
     )
@@ -343,10 +361,12 @@ function TaskDescriptionEditor({
   return (
     <div
       onClick={() => setEditing(true)}
-      title="点击编辑描述"
+      title={t("common.clickEditDescription")}
       className="min-h-9 cursor-text whitespace-pre-wrap wrap-break-word rounded-md px-2 py-1.5 text-sm leading-relaxed transition-colors hover:bg-accent/50"
     >
-      {task.description || <span className="text-muted-foreground">Add description...</span>}
+      {task.description || (
+        <span className="text-muted-foreground">{t("common.addDescription")}</span>
+      )}
     </div>
   )
 }
@@ -366,8 +386,11 @@ function SubIssuesSection({
   onOpenTask: (taskId: string) => void
   onOpenProject: (projectId: string) => void
 }) {
+  const { t } = useTranslation()
   const createTask = useCreateTask(workspaceId)
   const { data: members } = useMembers(workspaceId)
+  const statusOptions = useTaskStatusOptions()
+  const priorityOptions = usePriorityOptions()
   const [adding, setAdding] = useState(false)
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
@@ -375,7 +398,7 @@ function SubIssuesSection({
   const [priority, setPriority] = useState(0)
   const [assigneeId, setAssigneeId] = useState<string | null>(null)
   const [dueDate, setDueDate] = useState("")
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<unknown>(null)
 
   // parentId → 直接子节点；API 已按 (depth, createdAt) 排序，组内天然创建序
   const childrenOf = useMemo(() => {
@@ -434,18 +457,18 @@ function SubIssuesSection({
       },
       {
         onSuccess: () => setAdding(false),
-        onError: (err) => setError(errorMessage(err, "创建失败")),
+        onError: (err) => setError(err),
       },
     )
   }
+
+  const errorText = displayError(t, error, "common.createFailed")
 
   return (
     <div className="flex flex-col">
       {total > 0 && (
         <div className="mb-1 flex items-center gap-2 px-2 text-xs text-muted-foreground">
-          <span>
-            {done}/{total} done
-          </span>
+          <span>{t("task.subtreeProgress", { done, total })}</span>
         </div>
       )}
       {roots.map((node) => (
@@ -473,8 +496,8 @@ function SubIssuesSection({
           <input
             autoFocus
             value={title}
-            placeholder="Sub-issue title"
-            aria-label="子任务标题"
+            placeholder={t("task.subIssueTitlePlaceholder")}
+            aria-label={t("task.subIssueTitleAria")}
             onChange={(e) => setTitle(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") cancel()
@@ -483,30 +506,30 @@ function SubIssuesSection({
           />
           <input
             value={description}
-            placeholder="Add description..."
-            aria-label="子任务描述"
+            placeholder={t("common.addDescription")}
+            aria-label={t("task.subIssueDescAria")}
             onChange={(e) => setDescription(e.target.value)}
             className="mt-1.5 w-full bg-transparent text-sm text-foreground placeholder:text-ink-tertiary focus-visible:outline-none"
           />
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
-            <Select<TaskStatus> value={status} options={TASK_STATUS_OPTIONS} onChange={setStatus} />
-            <Select value={priority} options={PRIORITY_OPTIONS} onChange={setPriority} />
+            <Select<TaskStatus> value={status} options={statusOptions} onChange={setStatus} />
+            <Select value={priority} options={priorityOptions} onChange={setPriority} />
             <Select
               value={assigneeId ?? ""}
-              options={memberOptions(members, "Unassigned")}
+              options={memberOptions(members, t("task.unassigned"))}
               onChange={(id) => setAssigneeId(id || null)}
               placeholder={
                 <span className="inline-flex items-center gap-1.5">
                   <User className="size-3.5" />
-                  负责人
+                  {t("task.assignee")}
                 </span>
               }
             />
-            <DatePicker value={dueDate} onChange={setDueDate} placeholder="截止日期" />
+            <DatePicker value={dueDate} onChange={setDueDate} placeholder={t("task.dueDate")} />
             {/* project 继承父任务（R4）：只读 chip 展示 */}
             {task.project && (
               <span
-                title={`继承父任务所属项目 ${task.project.name}`}
+                title={t("task.inheritedProject", { name: task.project.name })}
                 className="inline-flex h-7 items-center gap-1.5 rounded-full border border-border bg-surface-2 px-3 text-xs text-ink-muted"
               >
                 <Box className="size-3.5" />
@@ -515,10 +538,10 @@ function SubIssuesSection({
             )}
             <div className="ml-auto flex items-center gap-1.5">
               <Button type="button" variant="ghost" size="sm" onClick={cancel}>
-                Cancel
+                {t("common.cancel")}
               </Button>
               <Button type="submit" size="sm" disabled={!title.trim() || createTask.isPending}>
-                Create
+                {t("common.create")}
               </Button>
             </div>
           </div>
@@ -530,10 +553,10 @@ function SubIssuesSection({
           className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
         >
           <Plus className="size-3.5" />
-          Add sub-issue
+          {t("task.addSubIssue")}
         </button>
       )}
-      {error && <p className="px-2 py-1 text-xs text-destructive">{error}</p>}
+      {errorText && <p className="px-2 py-1 text-xs text-destructive">{errorText}</p>}
     </div>
   )
 }
@@ -570,6 +593,8 @@ function SubTaskItem({
   onOpenTask,
   onOpenProject,
 }: SubTaskItemProps) {
+  const { t } = useTranslation()
+  const priorityLabel = usePriorityLabel()
   const children = childrenOf.get(node.id) ?? []
   const isCollapsed = collapsed.has(node.id)
   const stats = children.length > 0 ? subtreeStats(node.id, childrenOf) : null
@@ -591,7 +616,7 @@ function SubTaskItem({
         {children.length > 0 ? (
           <button
             type="button"
-            aria-label={isCollapsed ? "展开子任务" : "折叠子任务"}
+            aria-label={isCollapsed ? t("task.expandSubtasks") : t("task.collapseSubtasks")}
             aria-expanded={!isCollapsed}
             onClick={(e) => {
               e.stopPropagation()
@@ -606,7 +631,7 @@ function SubTaskItem({
         ) : (
           <span className="size-4 shrink-0" aria-hidden />
         )}
-        <span title={PRIORITY_LABELS[node.priority]} className="flex shrink-0 items-center">
+        <span title={priorityLabel(node.priority)} className="flex shrink-0 items-center">
           <PriorityIcon value={node.priority} />
         </span>
         <TaskStatusIcon status={node.status} />
@@ -653,7 +678,7 @@ function SubTaskItem({
             <MemberAvatar name={node.assignee.name} color={node.assignee.avatarColor || undefined} />
           ) : (
             <span
-              title="未指派"
+              title={t("task.unassigned")}
               className="size-5 shrink-0 rounded-full border border-dashed border-ink-subtle/60"
             />
           )}

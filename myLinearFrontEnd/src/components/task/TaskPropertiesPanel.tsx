@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import { useTranslation } from "react-i18next"
 import type { TaskDetail, UpdateTaskInput } from "@/api/types"
 import {
   TaskAssigneeEditor,
@@ -25,18 +26,19 @@ export function TaskPropertiesPanel({
   onPatch,
   onDelete,
 }: TaskPropertiesPanelProps) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-3">
-      <h2 className="text-xs font-medium text-muted-foreground">Properties</h2>
+      <h2 className="text-xs font-medium text-muted-foreground">{t("common.properties")}</h2>
 
       <div className="flex flex-col gap-3">
-        <Row label="Status">
+        <Row label={t("common.status")}>
           <TaskStatusEditor task={task} onPatch={onPatch} className="max-w-full" />
         </Row>
-        <Row label="Priority">
+        <Row label={t("common.priority")}>
           <TaskPriorityEditor task={task} onPatch={onPatch} className="max-w-full" />
         </Row>
-        <Row label="Assignee">
+        <Row label={t("task.assignee")}>
           <TaskAssigneeEditor
             task={task}
             workspaceId={workspaceId}
@@ -44,10 +46,10 @@ export function TaskPropertiesPanel({
             className="max-w-full"
           />
         </Row>
-        <Row label="Due date">
+        <Row label={t("task.dueDate")}>
           <TaskDueDateEditor task={task} onPatch={onPatch} className="max-w-full" />
         </Row>
-        <Row label="Project">
+        <Row label={t("task.project")}>
           <TaskProjectEditor
             task={task}
             workspaceId={workspaceId}
@@ -63,7 +65,7 @@ export function TaskPropertiesPanel({
           onClick={onDelete}
           className="rounded px-2 py-1 text-xs text-destructive transition-colors hover:bg-destructive/10"
         >
-          Delete task
+          {t("task.deleteAction")}
         </button>
       </div>
     </div>

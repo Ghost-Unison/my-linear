@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { useTranslation } from "react-i18next"
 import { PanelRight, Plus, X } from "lucide-react"
 import type { ProjectDetail, TaskRow, TaskStatus, UpdateProjectInput } from "@/api/types"
-import { ApiError, errorMessage } from "@/api/client"
+import { ApiError } from "@/api/client"
+import { displayError, translateError } from "@/lib/errors"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useDeleteProject, useProject, useUpdateProject } from "@/hooks/useProjects"
 import { useProjectTasks } from "@/hooks/useTasks"
@@ -23,8 +25,8 @@ import {
 } from "@/components/project/ProjectPropertyEditors"
 
 const TABS = [
-  { key: "overview", label: "Overview" },
-  { key: "tasks", label: "Tasks" },
+  { key: "overview", labelKey: "common.tabs.overview" },
+  { key: "tasks", labelKey: "nav.tasks" },
 ] as const
 
 // 面板开合记忆跨项目共享（Linear 同款抽屉交互）；隐私模式等写入失败静默忽略
@@ -33,6 +35,7 @@ const PANEL_KEY = "myLinear:project-panel-open"
 // /w/:workspaceId/projects/:projectId → 项目详情（属性 + 该项目任务，见 P0.md §2）
 // 结构对齐 Linear 项目页：顶部只到面包屑，下方 Overview/Tasks 双 tab，右侧可收起的属性面板
 export function ProjectDetailPage() {
+  const { t } = useTranslation()
   const { workspaceId, projectId } = useParams<{
     workspaceId: string
     projectId: string
@@ -82,19 +85,20 @@ export function ProjectDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // chip/标题/描述编辑共用的 PATCH 入口：统一错误上浮到页内横幅
-  const [editError, setEditError] = useState<string | null>(null)
+  const [editError, setEditError] = useState<unknown>(null)
   const patch = (input: UpdateProjectInput) => {
     setEditError(null)
     updateProject.mutate(
       { projectId: projectId!, input },
-      { onError: (err) => setEditError(errorMessage(err, "保存失败")) },
+      { onError: (err) => setEditError(err) },
     )
   }
+  const editErrorText = displayError(t, editError, "common.saveFailed")
 
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        加载中…
+        {t("common.loading")}
       </div>
     )
   }
@@ -102,12 +106,17 @@ export function ProjectDetailPage() {
     const notFound = !error || (error instanceof ApiError && error.status === 404)
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        {notFound ? "项目不存在或已删除" : `加载失败：${error!.message}`}
+        {notFound
+          ? t("errors.notFound.project")
+          : t("errors.loadFailedWithReason", {
+              reason: translateError(t, error, "errors.loadFailed"),
+            })}
       </div>
     )
   }
 
-  const workspaceName = workspaces?.find((w) => w.id === workspaceId)?.name ?? "Workspace"
+  const workspaceName =
+    workspaces?.find((w) => w.id === workspaceId)?.name ?? t("common.workspaceFallback")
 
   return (
     <div className="flex h-full flex-col">
@@ -117,22 +126,22 @@ export function ProjectDetailPage() {
           <Breadcrumb
             items={[
               { label: workspaceName, to: `/w/${workspaceId}/home` },
-              { label: "Projects", to: `/w/${workspaceId}/projects` },
+              { label: t("nav.projects"), to: `/w/${workspaceId}/projects` },
               { label: project.name },
             ]}
           />
         }
-        tabs={TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={tabPill(tab === t.key)}>
-            {t.label}
+        tabs={TABS.map((tb) => (
+          <button key={tb.key} onClick={() => setTab(tb.key)} className={tabPill(tab === tb.key)}>
+            {t(tb.labelKey)}
           </button>
         ))}
         actions={
           <button
             type="button"
             onClick={togglePanel}
-            aria-label={panelOpen ? "收起属性面板" : "展开属性面板"}
-            title={panelOpen ? "收起属性面板" : "展开属性面板"}
+            aria-label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
+            title={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
             className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <PanelRight className="size-4" />
@@ -141,12 +150,12 @@ export function ProjectDetailPage() {
       />
 
       {/* 编辑失败横幅（chip 即点即存的统一错误出口） */}
-      {editError && (
+      {editErrorText && (
         <div className="flex shrink-0 items-center justify-between border-b border-destructive/30 bg-destructive/10 px-6 py-1.5 text-xs text-destructive">
-          <span>{editError}</span>
+          <span>{editErrorText}</span>
           <button
             type="button"
-            aria-label="关闭错误提示"
+            aria-label={t("common.closeError")}
             onClick={() => setEditError(null)}
             className="flex size-5 items-center justify-center rounded hover:bg-destructive/20"
           >
@@ -167,7 +176,7 @@ export function ProjectDetailPage() {
             <TasksContent
               tasks={tasks ?? []}
               tasksLoading={tasksLoading}
-              tasksError={tasksError ? (tasksErrorMessage?.message ?? "任务加载失败") : null}
+              tasksError={tasksError ? displayError(t, tasksErrorMessage, "task.loadFailed") : null}
               onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
               onNewTask={openCreate}
             />
@@ -206,9 +215,9 @@ export function ProjectDetailPage() {
 
       <ConfirmDialog
         open={confirmDelete}
-        title={`删除项目「${project.name}」？`}
-        description="项目将被软删除；其下任务保留并自动变为无项目任务。"
-        confirmText="删除项目"
+        title={t("project.deleteConfirmTitle", { name: project.name })}
+        description={t("project.deleteConfirmDesc")}
+        confirmText={t("project.deleteConfirmButton")}
         destructive
         pending={deleteProject.isPending}
         onClose={() => setConfirmDelete(false)}
@@ -233,12 +242,15 @@ function OverviewContent({
   workspaceId: string
   onPatch: (input: UpdateProjectInput) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-7">
       <ProjectTitleEditor project={project} onPatch={onPatch} />
 
       <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-        <span className="pt-1.5 text-xs font-medium text-muted-foreground">Properties</span>
+        <span className="pt-1.5 text-xs font-medium text-muted-foreground">
+          {t("common.properties")}
+        </span>
         <div className="flex flex-wrap items-center gap-2">
           <ProjectStatusEditor project={project} onPatch={onPatch} />
           <ProjectPriorityEditor project={project} onPatch={onPatch} />
@@ -249,7 +261,9 @@ function OverviewContent({
       </div>
 
       <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-        <span className="pt-1.5 text-xs font-medium text-muted-foreground">Description</span>
+        <span className="pt-1.5 text-xs font-medium text-muted-foreground">
+          {t("common.description")}
+        </span>
         <ProjectDescriptionEditor project={project} onPatch={onPatch} />
       </div>
     </div>
@@ -273,16 +287,17 @@ function TasksContent({
   onOpenTask: (taskId: string) => void
   onNewTask: (status: TaskStatus) => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className="flex flex-col">
-      {tasksLoading && <p className="py-4 text-sm text-muted-foreground">加载中…</p>}
+      {tasksLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
       {tasksError && <p className="py-4 text-sm text-destructive">{tasksError}</p>}
       {!tasksLoading && !tasksError && tasks.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-10 text-center">
-          <p className="text-sm text-muted-foreground">项目中还没有任务</p>
+          <p className="text-sm text-muted-foreground">{t("project.noTasks")}</p>
           <Button variant="secondary" size="sm" className="mt-4" onClick={() => onNewTask("todo")}>
             <Plus />
-            New task
+            {t("task.newTask")}
           </Button>
         </div>
       )}
@@ -303,6 +318,7 @@ function ProjectTitleEditor({
   project: ProjectDetail
   onPatch: (input: UpdateProjectInput) => void
 }) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(project.name)
   useEffect(() => setValue(project.name), [project.name])
@@ -330,7 +346,7 @@ function ProjectTitleEditor({
           if (e.key === "Enter") commit()
           if (e.key === "Escape") revert()
         }}
-        aria-label="项目名称"
+        aria-label={t("project.nameAria")}
         className="w-full bg-transparent text-2xl font-medium tracking-tight text-foreground focus-visible:outline-none"
       />
     )
@@ -338,7 +354,7 @@ function ProjectTitleEditor({
   return (
     <h1
       onClick={() => setEditing(true)}
-      title="点击编辑名称"
+      title={t("project.clickEditName")}
       className="cursor-text wrap-break-word text-2xl font-medium tracking-tight text-foreground"
     >
       {project.name}
@@ -353,6 +369,7 @@ function ProjectDescriptionEditor({
   project: ProjectDetail
   onPatch: (input: UpdateProjectInput) => void
 }) {
+  const { t } = useTranslation()
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(project.description)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -384,13 +401,13 @@ function ProjectDescriptionEditor({
         autoFocus
         rows={1}
         value={value}
-        placeholder="Add description..."
+        placeholder={t("common.addDescription")}
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => {
           if (e.key === "Escape") revert()
         }}
-        aria-label="项目描述"
+        aria-label={t("project.descAria")}
         className="min-h-9 w-full resize-none overflow-hidden bg-transparent px-2 py-1.5 text-sm leading-relaxed text-foreground placeholder:text-ink-tertiary focus-visible:outline-none"
       />
     )
@@ -398,10 +415,12 @@ function ProjectDescriptionEditor({
   return (
     <div
       onClick={() => setEditing(true)}
-      title="点击编辑描述"
+      title={t("common.clickEditDescription")}
       className="min-h-9 cursor-text whitespace-pre-wrap wrap-break-word rounded-md px-2 py-1.5 text-sm leading-relaxed transition-colors hover:bg-accent/50"
     >
-      {project.description || <span className="text-muted-foreground">Add description...</span>}
+      {project.description || (
+        <span className="text-muted-foreground">{t("common.addDescription")}</span>
+      )}
     </div>
   )
 }

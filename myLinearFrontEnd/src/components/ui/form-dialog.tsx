@@ -1,5 +1,6 @@
 import type { FormEvent, ReactNode } from "react"
 import { X } from "lucide-react"
+import { useTranslation } from "react-i18next"
 import { Button, PendingLabel } from "./button"
 import { Dialog } from "./dialog"
 
@@ -35,6 +36,7 @@ export function FormDialog({
   submitDisabled?: boolean
   children: ReactNode
 }) {
+  const { t } = useTranslation()
   return (
     <Dialog open={open} onClose={onClose} className="max-w-2xl p-0">
       <form onSubmit={onSubmit}>
@@ -43,7 +45,7 @@ export function FormDialog({
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭"
+            aria-label={t("common.close")}
             className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <X className="size-4" />
@@ -55,7 +57,7 @@ export function FormDialog({
         <div className="mt-4 flex items-center justify-between border-t border-border px-6 py-4">
           <span className="text-sm text-destructive">{error}</span>
           <Button type="submit" disabled={pending || submitDisabled}>
-            <PendingLabel pending={pending} label={submitLabel} pendingLabel="创建中…" />
+            <PendingLabel pending={pending} label={submitLabel} pendingLabel={t("common.creating")} />
           </Button>
         </div>
       </form>
