@@ -1,0 +1,43 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    # schema 直接指向 goose 迁移目录，sqlc 会按文件序应用 Up 迁移（忽略 Down）
+    schema: "db/migrations"
+    queries: "db/queries"
+    gen:
+      go:
+        package: "store"
+        out: "internal/store"
+        sql_package: "pgx/v5"
+        emit_json_tags: true            # 生成 json tag，方便直接做 REST 响应
+        emit_pointers_for_null_types: true # 只对无 override 的类型生效（如 text → *string）；有 override 的类型必须自己声明 nullable 规则
+        emit_enum_valid_method: true    # 生成 TaskStatus.Valid() 等校验方法
+        emit_all_enum_values: true      # 生成 AllTaskStatusValues() 等枚举清单
+        overrides:
+          # uuid 映射为 google/uuid；可空列的指针必须用 nullable override 显式声明
+          #（实测：emit_pointers_for_null_types 不会作用到有 override 的类型，缺失此规则可空 uuid 会变 pgtype.UUID）
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"
+          - db_type: "uuid"
+            nullable: true
+            go_type: "*github.com/google/uuid.UUID"
+          # 时间类型映射为 time.Time / *time.Time；nullable 必须用结构化 go_type 声明指针
+          #（实测：字符串 "*time.Time" 会被二次指针化为 **time.Time；写值类型则丢失指针）
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "timestamptz"
+            nullable: true
+            go_type:
+              import: "time"
+              type: "Time"
+              pointer: true
+          # date（无时区日历日）映射为 civil.Date（Google civil time 库）：
+          # JSON 经 TextMarshaler 只收/只产 YYYY-MM-DD，且实现了 sql.Scanner/driver.Valuer 供 pgx 直接编解码
+          - db_type: "date"
+            go_type: "cloud.google.com/go/civil.Date"
+          - db_type: "date"
+            nullable: true
+            go_type: "*cloud.google.com/go/civil.Date"
+          # saved_view.config 以 RawMessage 透传，由应用层自行解析
+          - db_type: "jsonb"
+            go_type: "encoding/json.RawMessage"

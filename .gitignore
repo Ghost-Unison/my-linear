@@ -1,0 +1,18 @@
+# --- Go ---
+myLinearBackEnd/bin/
+*.exe
+.env
+
+# --- Node / Vite ---
+node_modules/
+myLinearFrontEnd/dist/
+*.local
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# --- Other ---
+verify-capture/

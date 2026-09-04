@@ -1,0 +1,45 @@
+import { api } from "./client"
+import type {
+  CreateProjectInput,
+  ProjectDetail,
+  ProjectRow,
+  UpdateProjectInput,
+} from "./types"
+
+// Project 接口见 docs/api.md §7（嵌套于 workspace）
+// 排序由后端 handler 层内存完成（api.md §2.2），sort 白名单：name/createdAt/priority/status
+export const listProjects = (
+  workspaceId: string,
+  params?: { sort?: string; order?: string },
+) => {
+  const qs = new URLSearchParams()
+  if (params?.sort) qs.set("sort", params.sort)
+  if (params?.order) qs.set("order", params.order)
+  const q = qs.toString()
+  return api<ProjectRow[]>(`/workspaces/${workspaceId}/projects${q ? `?${q}` : ""}`)
+}
+
+export const createProject = (workspaceId: string, input: CreateProjectInput) =>
+  api<ProjectDetail>(`/workspaces/${workspaceId}/projects`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+
+export const getProject = (workspaceId: string, projectId: string) =>
+  api<ProjectDetail>(`/workspaces/${workspaceId}/projects/${projectId}`)
+
+export const updateProject = (
+  workspaceId: string,
+  projectId: string,
+  input: UpdateProjectInput,
+) =>
+  api<ProjectDetail>(`/workspaces/${workspaceId}/projects/${projectId}`, {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  })
+
+// 软删除（R5）：其下任务脱离项目保留；204 幂等，404 = 不存在或已删
+export const deleteProject = (workspaceId: string, projectId: string) =>
+  api<void>(`/workspaces/${workspaceId}/projects/${projectId}`, {
+    method: "DELETE",
+  })

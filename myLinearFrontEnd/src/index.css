@@ -1,0 +1,108 @@
+@import "@fontsource-variable/inter";
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Linear 设计 token → shadcn CSS 变量映射
+ * 基准：DESIGN-linear.app.md（P0 仅暗色主题）
+ */
+:root {
+  --background: #010102; /* canvas：近纯黑带蓝调 */
+  --foreground: #f7f8f8; /* ink */
+  --card: #0f1011; /* surface-1 */
+  --card-foreground: #f7f8f8;
+  --popover: #141516; /* surface-2 */
+  --popover-foreground: #f7f8f8;
+  --primary: #5e6ad2; /* Linear 薰衣草蓝，仅用于品牌/CTA/焦点环 */
+  --primary-hover: #828fff; /* primary CTA 悬停态 */
+  --primary-foreground: #ffffff;
+  --secondary: #141516;
+  --secondary-foreground: #f7f8f8;
+  --muted: #141516;
+  --muted-foreground: #8a8f98; /* ink-subtle */
+  --accent: #18191a; /* surface-3，悬停抬升 */
+  --accent-foreground: #f7f8f8;
+  --destructive: #eb5757;
+  --border: #23252a; /* hairline */
+  --input: #23252a;
+  --ring: #5e6ad2; /* primary-focus */
+  --radius: 0.5rem; /* rounded.md = 8px，按钮/输入框基准 */
+
+  /* Linear 扩展 token：surface 阶梯与辅助墨色，供业务组件使用 */
+  --surface-1: #0f1011;
+  --surface-2: #141516;
+  --surface-3: #18191a;
+  --surface-4: #191a1b;
+  --ink-muted: #d0d6e0;
+  --ink-subtle: #8a8f98;
+  --ink-tertiary: #62666d;
+  --hairline-strong: #34343a;
+  --success: #27a644;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-subtle: var(--ink-subtle);
+  --color-ink-tertiary: var(--ink-tertiary);
+  --color-success: var(--success);
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 4px);
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    /* Linear 风格细滚动条：深色透明轨道 + hairline-strong 滑块，无箭头按钮 */
+    scrollbar-width: thin;
+    scrollbar-color: var(--hairline-strong) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--hairline-strong);
+    border-radius: 9999px;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: var(--ink-tertiary);
+  }
+  *::-webkit-scrollbar-button {
+    display: none;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+  }
+}
