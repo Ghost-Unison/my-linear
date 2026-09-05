@@ -5,6 +5,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/project"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/task"
@@ -43,6 +44,7 @@ func New(pool *pgxpool.Pool) *gin.Engine {
 			projects.PATCH("/:projectId", project.UpdateProject(pool))
 			projects.DELETE("/:projectId", project.SoftDeleteProject(pool))
 			projects.GET("/:projectId/tasks", task.GetTasksByProject(pool))
+			projects.PUT("/:projectId/labels", project.UpdateProjectLabels(pool))
 		}
 
 		tasks := workspaces.Group("/:workspaceId/tasks")
@@ -53,6 +55,15 @@ func New(pool *pgxpool.Pool) *gin.Engine {
 			tasks.GET("/:taskId/subtree", task.GetTaskSubtree(pool))
 			tasks.PATCH("/:taskId", task.UpdateTask(pool))
 			tasks.DELETE("/:taskId", task.SoftDeleteTask(pool))
+			tasks.PUT("/:taskId/labels", task.UpdateTaskLabels(pool))
+		}
+
+		labels := workspaces.Group("/:workspaceId/labels")
+		{
+			labels.GET("", label.ListLabelsByWorkspace(pool))
+			labels.POST("", label.CreateLabel(pool))
+			labels.PATCH("/:labelId", label.UpdateLabel(pool))
+			labels.DELETE("/:labelId", label.DeleteLabel(pool))
 		}
 	}
 

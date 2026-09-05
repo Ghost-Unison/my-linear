@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,11 +18,8 @@ import (
 func ListMembersByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceId := c.Param("workspaceId")
-		//check if legal uuid
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
 			return
 		}
 
@@ -45,20 +41,22 @@ func ListMembersByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 func CreateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
+			return
+		}
+
 		var req CreateMemberDTO
 		if err := c.ShouldBindJSON(&req); err != nil {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
 			return
 		}
-		if req.Name == "" {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")
+		if req.Name == "" || req.AvatarColor == "" {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 与 color 为必填字段")
 			return
 		}
-
-		workspaceId := c.Param("workspaceId")
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		if !handler.IsHexColor(req.AvatarColor) {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "avatarColor 应符合 HEX 颜色规范")
 			return
 		}
 
@@ -87,17 +85,12 @@ func CreateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 func UpdateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceId := c.Param("workspaceId")
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
 			return
 		}
-
-		memberId := c.Param("memberId")
-		memberUUID, err := uuid.Parse(memberId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "memberId 不符合 UUID 格式")
+		memberUUID, ok := handler.ParseUUIDParam(c, "memberId")
+		if !ok {
 			return
 		}
 
@@ -137,7 +130,11 @@ func UpdateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 		if req.AvatarColor.Set {
-			// avatar_color 为 NOT NULL DEFAULT ''：显式 null 置空即写空串，不是错误
+			if !req.AvatarColor.Valid || !handler.IsHexColor(req.AvatarColor.Value) {
+				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "avatarColor 为必填字段且应符合 HEX 颜色规范")
+				return
+			}
+			// avatar_color 为 NOT NULL DEFAULT '' 但是前端一般一定会传一个颜色
 			if req.AvatarColor.Valid {
 				member.AvatarColor = req.AvatarColor.Value
 			} else {
@@ -171,19 +168,15 @@ func UpdateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 func DeleteMember(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceId := c.Param("workspaceId")
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
+			return
+		}
+		memberUUID, ok := handler.ParseUUIDParam(c, "memberId")
+		if !ok {
 			return
 		}
 
-		memberId := c.Param("memberId")
-		memberUUID, err := uuid.Parse(memberId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "memberId 不符合 UUID 格式")
-			return
-		}
 		if err := queries.DeleteMember(c.Request.Context(), store.DeleteMemberParams{
 			ID:          memberUUID,
 			WorkspaceID: workspaceUUID,

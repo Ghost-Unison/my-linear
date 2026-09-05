@@ -11,6 +11,7 @@ Linear 风格的个人任务记录系统。MVP 阶段仅支持个人使用、无
 | [DATABASE_DESIGN.md](./DATABASE_DESIGN.md) | 数据库设计定稿（9 张表 + 4 个枚举 + ER 图 + 级联策略，v1.3） |
 | [DESIGN-linear.app.md](./DESIGN-linear.app.md) | Linear 官方视觉设计 token（色彩/字体/间距/组件规格），前端主题基准 |
 | [docs/product-design/P0.md](./docs/product-design/P0.md) | P0 阶段产品模块设计（阶段快照，每阶段一份） |
+| [docs/product-design/P1.md](./docs/product-design/P1.md) | P1 阶段产品模块设计（Label 标签体系） |
 | [docs/api.md](./docs/api.md) | API 契约（单一活文档，随阶段更新，接口标注引入阶段） |
 
 ## 技术栈
@@ -71,18 +72,18 @@ npm run dev
 > 定位：参考 Linear 的页面布局与信息架构，但**功能上做最大简化**。
 > 视觉美感与交互动效后续迭代优化，先保证功能闭环、信息层级正确。
 
-模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。
+模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）为当前阶段快照：标签管理区 + 任务/项目打标与展示；内置固定视图取消，与 saved_view 自定义视图、列表页 filter / display options 按钮一并归入 P2。
 
 ## 功能边界（裁剪项与后置项）
 
 裁剪（不做）：登录鉴权（P4 开源化再做）、评论、Activity 动态、附件、通知/Inbox、Cycle/Sprint、Milestone、项目 Progress 图表、Health 状态、任务编号（GHO-13）、工时估算、暗/亮主题切换（先只做暗色）。
 
-后置：自定义视图与过滤器/展示控制面板（P2）、看板拖拽排序（P3）、列表行内编辑（P3）、标签就地创建（P3）。
+后置：自定义视图（saved_view）与列表页 filter / display options 面板（P2）、看板拖拽排序（P3）、列表行内编辑（P3）、标签就地创建（P3）。
 
 ## 开发路线图
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
-- **P1**：标签体系 + 按标签筛选与分组 + 内置固定视图（纯前端）
-- **P2**：saved_view 自定义视图、展示控制面板（子任务显示/嵌套开关等，对齐 Linear filter 面板）、项目详情页完善
+- **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）
+- **P2**：saved_view 自定义视图、列表页 filter 按钮与 display options 按钮（分组/排序/展示属性；展示属性为纯前端渲染开关，接口返回完备行）、项目详情页完善
 - **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、标签就地创建（Linear 式 "Change or add labels" 弹层）、交互细节打磨
 - **P4**：开源化（注册登录、多租户、云上部署）

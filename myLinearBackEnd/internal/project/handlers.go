@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"cmp"
 	"errors"
-	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
-	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
-	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -20,7 +22,7 @@ import (
 func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceUUID, ok := parseUUIDParam(c, "workspaceId")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
 		if !ok {
 			return
 		}
@@ -50,6 +52,11 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
+			return
+		}
+
 		// parse request body
 		var req CreateProjectDto
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -58,11 +65,6 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 		if req.Name == "" {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")
-			return
-		}
-
-		workspaceUUID, ok := parseUUIDParam(c, "workspaceId")
-		if !ok {
 			return
 		}
 
@@ -122,7 +124,7 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		// AddProjectMembers
 		err = q.AddProjectMembers(c.Request.Context(), store.AddProjectMembersParams{
 			ProjectID: created.ID,
-			Column2:   req.MemberIds,
+			MemberIds: req.MemberIds,
 		})
 		if err != nil {
 			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "添加项目成员失败")
@@ -135,7 +137,7 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		// 提交后重读，装配 ProjectDetail并返回
-		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, created.ID)
+		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, created.ID)
 		if !ok {
 			return
 		}
@@ -146,17 +148,17 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 func GetProject(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceUUID, ok := parseUUIDParam(c, "workspaceId")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
 		if !ok {
 			return
 		}
-		projectUUID, ok := parseUUIDParam(c, "projectId")
+		projectUUID, ok := handler.ParseUUIDParam(c, "projectId")
 		if !ok {
 			return
 		}
 
 		//get - queryProjectDetail
-		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, projectUUID)
+		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, projectUUID)
 		if !ok {
 			return
 		}
@@ -167,12 +169,11 @@ func GetProject(pool *pgxpool.Pool) gin.HandlerFunc {
 func UpdateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceUUID, ok := parseUUIDParam(c, "workspaceId")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
 		if !ok {
 			return
 		}
-
-		projectUUID, ok := parseUUIDParam(c, "projectId")
+		projectUUID, ok := handler.ParseUUIDParam(c, "projectId")
 		if !ok {
 			return
 		}
@@ -304,7 +305,7 @@ func UpdateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 			if req.MemberIds.Valid {
 				err = q.AddProjectMembers(c.Request.Context(), store.AddProjectMembersParams{
 					ProjectID: projectUUID,
-					Column2:   req.MemberIds.Value,
+					MemberIds: req.MemberIds.Value,
 				})
 				if err != nil {
 					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "添加项目成员失败")
@@ -337,7 +338,7 @@ func UpdateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		// 提交后重读，装配 ProjectDetail（UpdateProject 返回裸 Project，缺 taskCount/lead，重读更省事）
-		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, projectUUID)
+		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, projectUUID)
 		if !ok {
 			return
 		}
@@ -347,12 +348,11 @@ func UpdateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 
 func SoftDeleteProject(pool *pgxpool.Pool) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		workspaceUUID, ok := parseUUIDParam(c, "workspaceId")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
 		if !ok {
 			return
 		}
-
-		projectUUID, ok := parseUUIDParam(c, "projectId")
+		projectUUID, ok := handler.ParseUUIDParam(c, "projectId")
 		if !ok {
 			return
 		}
@@ -436,16 +436,6 @@ func sortProjects(projects []store.ListProjectsByWorkspaceRow, field, order stri
 // 校验与装配 helper：失败时均已写好错误响应并返回 false / ok=false，
 // 调用方必须 `if !ok { return }`——helper 内的 return 只退出 helper，不会中断调用方
 
-// parseUUIDParam 解析路径参数中的 UUID
-func parseUUIDParam(c *gin.Context, name string) (uuid.UUID, bool) {
-	id, err := uuid.Parse(c.Param(name))
-	if err != nil {
-		handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", name+" 不符合 UUID 格式")
-		return uuid.Nil, false
-	}
-	return id, true
-}
-
 // dedupeUUIDs 去重：slices.Compact 只压缩连续的重复元素，须先排序
 // uuid.UUID 是裸的 [16]byte 数组，没有 Compare 方法（不同于 time.Time），
 // 且 google/uuid v1.6.0 也没有包级 uuid.Compare 函数，故用 bytes.Compare 按字节比较
@@ -495,7 +485,7 @@ func checkMemberLegal(c *gin.Context, queries *store.Queries, workspaceUUID uuid
 }
 
 // buildProjectDetail 重读项目并装配 ProjectDetail（Create/Get/Update 统一入口）
-func buildProjectDetail(c *gin.Context, queries *store.Queries, workspaceUUID, projectUUID uuid.UUID) (ProjectDetail, bool) {
+func BuildProjectDetail(c *gin.Context, queries *store.Queries, workspaceUUID, projectUUID uuid.UUID) (ProjectDetail, bool) {
 	got, err := queries.GetProject(c.Request.Context(), store.GetProjectParams{
 		WorkspaceID: workspaceUUID,
 		ID:          projectUUID,
@@ -527,4 +517,100 @@ func buildProjectDetail(c *gin.Context, queries *store.Queries, workspaceUUID, p
 		})
 	}
 	return detail, true
+}
+
+// UpdateProjectLabels 全量替换打标（api.md §9 PUT /projects/:id/labels）。
+// 放在 project 包：需复用 BuildProjectDetail 装配响应；依赖方向 project → label，避免循环依赖
+func UpdateProjectLabels(pool *pgxpool.Pool) gin.HandlerFunc {
+	queries := store.New(pool)
+	return func(c *gin.Context) {
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
+			return
+		}
+		projectUUID, ok := handler.ParseUUIDParam(c, "projectId")
+		if !ok {
+			return
+		}
+
+		//先解析请求体，避免非法请求占用事务
+		var req label.BatchUpdateLabelIDs
+		if err := c.ShouldBindJSON(&req); err != nil {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
+			return
+		}
+
+		//校验项目是否存在
+		projectExist, err := queries.IfProjectExists(c.Request.Context(), store.IfProjectExistsParams{
+			ID:          projectUUID,
+			WorkspaceID: workspaceUUID,
+		})
+		if err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目失败")
+			return
+		}
+		if !projectExist {
+			handler.Error(c, http.StatusNotFound, "NOT_FOUND", "项目不存在")
+			return
+		}
+
+		//beginTx
+		tx, err := pool.Begin(c.Request.Context())
+		if err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务开始失败")
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) // Commit 后调用是 no-op，兜底
+		q := store.New(pool).WithTx(tx)
+
+		if req.LabelIDs.Set {
+			if req.LabelIDs.Valid {
+				//合法性校验（R6）：同 workspace + scope=project；去重避免联结表主键冲突
+				ids, err := label.ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceUUID, store.LabelScopeProject, req.LabelIDs.Value)
+				if err != nil {
+					if errors.Is(err, label.ErrLabelCrossWorkspace) {
+						handler.Error(c, http.StatusBadRequest, "CROSS_WORKSPACE", "labelIds 中包含不属于本工作区的标签")
+						return
+					}
+					if errors.Is(err, label.ErrLabelScopeMismatch) {
+						handler.Error(c, http.StatusBadRequest, "LABEL_SCOPE_MISMATCH", "labelIds 中包含 scope 不是 project 的标签")
+						return
+					}
+					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "校验标签失败")
+					return
+				}
+				//删除
+				if err := q.DeleteProjectLabels(c.Request.Context(), projectUUID); err != nil {
+					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "删除项目标签失败")
+					return
+				}
+				//添加（空数组 = 清空全部，unnest 空数组插入 0 行）
+				if err := q.AddProjectLabels(c.Request.Context(), store.AddProjectLabelsParams{
+					ProjectID: projectUUID,
+					LabelIds:  ids,
+				}); err != nil {
+					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "添加项目标签失败")
+					return
+				}
+			} else {
+				//显式 null = 清空全部
+				if err := q.DeleteProjectLabels(c.Request.Context(), projectUUID); err != nil {
+					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "删除项目标签失败")
+					return
+				}
+			}
+		}
+
+		if err := tx.Commit(c.Request.Context()); err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务提交失败")
+			return
+		}
+
+		//提交后重新获取projectDetail
+		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, projectUUID)
+		if !ok {
+			return
+		}
+		c.JSON(http.StatusOK, projectDetail)
+	}
 }

@@ -25,7 +25,7 @@ RETURNING *;
 
 -- name: AddProjectMembers :exec
 INSERT INTO project_member (project_id, member_id)
-SELECT $1, unnest($2::uuid[]);
+SELECT $1, unnest(sqlc.arg('member_ids')::uuid[]);
 
 
 -- name: GetProject :one
@@ -35,6 +35,10 @@ FROM project p
 LEFT JOIN member m ON p.lead_id = m.id
 WHERE p.id = $1
 AND p.workspace_id = $2 AND p.deleted_at IS NULL;
+
+-- name: IfProjectExists :one
+-- 判断项目是否存在 用GetProject太复杂，所以单独写一个判断
+SELECT EXISTS(SELECT 1 FROM project WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL);
 
 
 -- name: UpdateProject :one

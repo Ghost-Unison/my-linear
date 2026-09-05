@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/google/uuid"
-
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,12 +62,8 @@ func CreateWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 func GetWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceId := c.Param("workspaceId")
-
-		//check if legal uuid
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
 			return
 		}
 
@@ -90,10 +84,8 @@ func GetWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 func UpdateWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceId := c.Param("workspaceId")
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
 			return
 		}
 
@@ -149,14 +141,11 @@ func UpdateWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 func DeleteWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
-		workspaceId := c.Param("workspaceId")
-
-		//check if legal uuid
-		workspaceUUID, err := uuid.Parse(workspaceId)
-		if err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "workspaceId 不符合 UUID 格式")
+		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
+		if !ok {
 			return
 		}
+
 		if err := queries.DeleteWorkspace(c.Request.Context(), workspaceUUID); err != nil {
 			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "删除工作区失败")
 			return

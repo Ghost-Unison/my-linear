@@ -230,6 +230,23 @@ func (q *Queries) GetTaskSubtree(ctx context.Context, arg GetTaskSubtreeParams) 
 	return items, nil
 }
 
+const ifTaskExist = `-- name: IfTaskExist :one
+SELECT EXISTS (SELECT 1 FROM task WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL)
+`
+
+type IfTaskExistParams struct {
+	ID          uuid.UUID `json:"id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+}
+
+// 判断任务是否存在 用GetTask太复杂，所以单独写一个判断
+func (q *Queries) IfTaskExist(ctx context.Context, arg IfTaskExistParams) (bool, error) {
+	row := q.db.QueryRow(ctx, ifTaskExist, arg.ID, arg.WorkspaceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listTasksByProject = `-- name: ListTasksByProject :many
 SELECT t.id, t.workspace_id, t.project_id, t.parent_id, t.title, t.description, t.status, t.priority, t.assignee_id, t.due_date, t.created_by, t.created_at, t.updated_at, t.deleted_at, p.name AS project_name, m.name AS assignee_name, m.avatar_color AS assignee_avatar_color, pt.title AS parent_title
 FROM task t 

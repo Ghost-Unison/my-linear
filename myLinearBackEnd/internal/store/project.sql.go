@@ -20,11 +20,11 @@ SELECT $1, unnest($2::uuid[])
 
 type AddProjectMembersParams struct {
 	ProjectID uuid.UUID   `json:"project_id"`
-	Column2   []uuid.UUID `json:"column_2"`
+	MemberIds []uuid.UUID `json:"member_ids"`
 }
 
 func (q *Queries) AddProjectMembers(ctx context.Context, arg AddProjectMembersParams) error {
-	_, err := q.db.Exec(ctx, addProjectMembers, arg.ProjectID, arg.Column2)
+	_, err := q.db.Exec(ctx, addProjectMembers, arg.ProjectID, arg.MemberIds)
 	return err
 }
 
@@ -151,6 +151,23 @@ func (q *Queries) GetProject(ctx context.Context, arg GetProjectParams) (GetProj
 		&i.TaskCount,
 	)
 	return i, err
+}
+
+const ifProjectExists = `-- name: IfProjectExists :one
+SELECT EXISTS(SELECT 1 FROM project WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL)
+`
+
+type IfProjectExistsParams struct {
+	ID          uuid.UUID `json:"id"`
+	WorkspaceID uuid.UUID `json:"workspace_id"`
+}
+
+// 判断项目是否存在 用GetProject太复杂，所以单独写一个判断
+func (q *Queries) IfProjectExists(ctx context.Context, arg IfProjectExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, ifProjectExists, arg.ID, arg.WorkspaceID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
 }
 
 const listProjectMembers = `-- name: ListProjectMembers :many

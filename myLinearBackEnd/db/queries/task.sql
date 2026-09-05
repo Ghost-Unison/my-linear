@@ -56,6 +56,10 @@ LEFT JOIN ps ON ps.root_id = t.parent_id
 WHERE t.id = $1 
 AND t.workspace_id = $2 AND t.deleted_at IS NULL;
 
+-- name: IfTaskExist :one
+-- 判断任务是否存在 用GetTask太复杂，所以单独写一个判断
+SELECT EXISTS (SELECT 1 FROM task WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL);
+
 
 -- name: GetTaskSubtree :many
 -- get s.due_date lead to **time.Time

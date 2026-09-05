@@ -1,7 +1,7 @@
 # myLinear API 契约
 
 > **文档性质**：单一活文档，随开发阶段持续更新。每个接口标注引入阶段（`P0` / `P1` / `P2`）。
-> **上游依据**：[DATABASE_DESIGN.md](../DATABASE_DESIGN.md)（v1.3）、[docs/product-design/P0.md](./product-design/P0.md)。
+> **上游依据**：[DATABASE_DESIGN.md](../DATABASE_DESIGN.md)（v1.3）、[docs/product-design/P0.md](./product-design/P0.md)、[docs/product-design/P1.md](./product-design/P1.md)。
 > **实现链**：本文档 → `db/queries/*.sql`（sqlc）→ Gin handler（业务规则内化于此，见 §2.1）。每个接口标注对应的 sqlc 查询名。
 
 ---
@@ -36,6 +36,7 @@
 | 400 | `LEAD_MEMBER_CONFLICT` | lead 同时出现在 members 中（规则 R2） |
 | 400 | `INVALID_ASSIGNEE` | assignee 不是本工作区成员（规则 R3） |
 | 400 | `CROSS_WORKSPACE` | 引用的资源不属于该 workspace |
+| 400 | `LABEL_SCOPE_MISMATCH` | 标签 scope 与目标类型不匹配（如任务挂了 project 标签，规则 R6） |
 | 404 | `NOT_FOUND` | 资源不存在或已软删 |
 | 409 | `NAME_CONFLICT` | 违反唯一约束（workspace 内成员重名等）；捕获 PG 错误码 `23505` 映射 |
 | 500 | `INTERNAL` | 未预期服务端错误的兜底（数据库失败等） |
@@ -124,9 +125,12 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 | 接口 | 写操作组合（顺序执行） | 显式事务 |
 |------|----------------------|---------|
-| POST /projects | `CreateProject` + `AddProjectMembers` | ✔ |
+| POST /projects | `CreateProject` + `AddProjectMembers`（+ 传了 labelIds 时 `AddProjectLabels`） | ✔ |
+| PUT /projects/:id/labels | `DeleteProjectLabels` + `AddProjectLabels`（全量替换） | ✔ |
 | PATCH /projects/:id | `UpdateProject`（+ 传了 memberIds 时 `DeleteProjectMembers` + `AddProjectMembers`） | ✔ |
 | DELETE /projects/:id | `SoftDeleteProject` + `DetachProjectTasks` | ✔ |
+| POST /tasks | `CreateTask`（+ 传了 labelIds 时 `AddTaskLabels`） | ✔ |
+| PUT /tasks/:id/labels | `DeleteTaskLabels` + `AddTaskLabels`（全量替换） | ✔ |
 | PATCH /tasks/:id | `UpdateTask`（+ projectId 变更时 `SyncSubtreeProject`） | ✔ |
 | DELETE /tasks/:id | `SoftDeleteTaskSubtree` 单条递归 CTE，天然原子 | — |
 | DELETE /workspaces/:id | 仅 `DeleteWorkspace`；member/project/task/label/联结表/saved_view 全部由外键 `CASCADE` 物理级联 | — |
@@ -200,6 +204,14 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
   - 替代方案（未采用）：SQL 改 `::text[]` + Go 传 `[]string`，省去注册但失去 sqlc 类型安全。
 - **配套的 nil 切片陷阱**：`cardinality(sqlc.arg('statuses'))=0` 表示“空筛选”，Go 侧必须传**非 nil 空切片**（`[]store.TaskStatus{}`）；传 nil 会被 pgx 编成 SQL NULL，`cardinality(NULL)=NULL` 使整个谓词为 NULL，查询静默返回空集（不报错，最难排查）。
 
+### 2.9 行完备原则（P2 兼容）
+
+列表/详情响应携带**展示选项可能用到的全部字段**（P0 已有 status/priority/assignee/dueDate/project 等，P1 补 labels）。理由：P2 的 display options 面板（分组/排序/展示属性）是前端对已取回平铺行集的内存操作，切换开关不发请求：
+
+- **不引入动态字段查询参数**（不做 `fields=...` sparse fieldsets）：sqlc 生成固定形状结构体，动态列破坏类型安全；前端响应类型退化为 Partial；TanStack Query 缓存键被展示配置污染（一切换即 refetch）。
+- **saved_view.config（P2）后端 opaque 存储**：CRUD 原样存、原样返回，不解释 `visible_fields` / `group_by` / `order_by` 等键；前端读取 config 后自行应用，仅 `filters` 部分翻译成列表接口查询参数时才发请求。
+- 若未来某展示属性需要行里目前没有的数据（如状态停留时长），做法是把该字段加进行契约、永远返回，仍不做动态选择。
+
 ---
 
 ## 3. 业务规则（handler 层保证，对应 DATABASE_DESIGN §6）
@@ -211,6 +223,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 | R3 | 任务 assignee ∈ 本 workspace 成员 ∪ {空}（与项目 lead/members 解绑，对齐 Linear：项目成员仅为干系人概念，不构成指派边界） | 创建/更新任务 |
 | R4 | 子任务与父任务 project 一致（父无项目则子也无项目）；移动任务 project 时同步整棵子树 | 创建/更新任务 |
 | R5 | 软删 project：事务内 `deleted_at=now()` + 其下 task `project_id=NULL`（外键不触发，须显式脱离）；软删 task：单条递归 UPDATE 级联整棵子树 | 删除接口 |
+| R6 | 打标（含创建时 labelIds）时 label 属同 workspace 且 scope 匹配目标类型（task_label 只引用 scope='task'，project_label 同理） | 打标 PUT / 创建 labelIds |
 
 ## 4. 对象模型
 
@@ -219,10 +232,16 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 { "id": "uuid", "name": "...", "description": "...", "createdAt": "...", "updatedAt": "..." }
 
 // Member
-{ "id": "uuid", "name": "...", "email": "... | null", "avatarColor": "#5e6ad2 | ''" }
+{ "id": "uuid", "name": "...", "email": "... | null", "avatarColor": "#5e6ad2" }   // hex；P1 前遗留行可能为 ''
 
 // MemberRef（嵌入用精简引用）
 { "id": "uuid", "name": "...", "avatarColor": "..." }
+
+// LabelRef（嵌入任务/项目行，P1）
+{ "id": "uuid", "name": "...", "color": "#EB5757" }
+
+// Label（LabelRef + scope，标签管理区，P1）
+{ "id": "uuid", "scope": "task | project", "name": "...", "color": "#EB5757" }
 
 // ProjectRef（嵌入任务行）
 { "id": "uuid", "name": "..." }
@@ -233,6 +252,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
   "lead": MemberRef | null,
   "startDate": "2026-08-01 | null", "targetDate": "2026-10-01 | null",
   "taskCount": 12,                       // 未软删任务数（含子任务）
+  "labels": LabelRef[],                  // P1：行完备原则（§2.9）；P1 列表不渲染，P2 display options 消费
   "createdAt": "...", "updatedAt": "..."
 }
 
@@ -245,6 +265,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
   "project": ProjectRef | null,
   "assignee": MemberRef | null,
   "dueDate": "2026-10-01 | null",
+  "labels": LabelRef[],                  // P1：行完备原则（§2.9），列表行 chip 渲染
   "createdAt": "...", "updatedAt": "..."
 }
 
@@ -254,10 +275,11 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 { "id": "uuid", "parentId": "uuid", "depth": 1,
   "title": "...", "status": "done", "priority": 0,
   "project": ProjectRef | null,            // 与父任务一致（R4）；带上使接口自包含，子任务行可直接渲染项目徽标
-  "assignee": MemberRef | null, "dueDate": "... | null" }
+  "assignee": MemberRef | null, "dueDate": "... | null",
+  "labels": LabelRef[] }                 // P1：子任务行与列表行同渲染
 ```
 
-> 说明：列表统一返回**平铺数组**（含 `parentId`），前端负责按 status 分组与树形组装；子任务进度徽标 x/y 由前端从 subtree 数组计算（x = status='done' 的节点数，y = 节点总数）。
+> 说明：列表统一返回**平铺数组**（含 `parentId`），前端负责按 status 分组与树形组装；子任务进度徽标 x/y 由前端从 subtree 数组计算（x = status='done' 的节点数，y = 节点总数）。嵌入的 labels 数组按 created_at 升序，空为 `[]`（非 null）。
 
 ---
 
@@ -290,12 +312,13 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 → sqlc: `ListMembersByWorkspace`（`ORDER BY name`）
 
 ### POST /workspaces/:wid/members `P0`
-**请求**: `{ "name": "必填", "email": "可选", "avatarColor": "可选" }` → **201**: `Member`。
+**请求**: `{ "name": "必填", "email": "可选", "avatarColor": "必填 hex" }` → **201**: `Member`。
+avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，不存在无色场景；与 label.color 同一套 `IsHexColor` 校验）。
 重名 → `409 NAME_CONFLICT`（唯一索引 `(workspace_id, name)` 兜底，捕获 `23505` 映射）。
 → sqlc: `CreateMember`
 
 ### PATCH /workspaces/:wid/members/:memberId `P0`
-**请求**: `{ "name"?, "email"?, "avatarColor"? }`（显式 `null` 清空 email）→ **200**: `Member`。
+**请求**: `{ "name"?, "email"?, "avatarColor"? }`（显式 `null` 清空 email；avatarColor 传则必须 hex，显式 `null` → `400`，不允许置空）→ **200**: `Member`。
 重名 → `409 NAME_CONFLICT`（同 POST，捕获 `23505` 映射）。
 → sqlc: `UpdateMember`（全字段覆盖，presence 合并）
 
@@ -308,7 +331,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 ### GET /workspaces/:wid/projects `P0`
 **参数**: `sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）。
 **响应** `200`: `ProjectRow[]`（不含已软删）。
-→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount。**排序由 handler 层内存完成**（§2.2），SQL 不带 ORDER BY
+→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染）。**排序由 handler 层内存完成**（§2.2），SQL 不带 ORDER BY
 
 ### POST /workspaces/:wid/projects `P0`
 **请求**:
@@ -328,7 +351,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 ### GET /workspaces/:wid/projects/:projectId `P0`
 **响应** `200`: `ProjectDetail`（含 members 列表）。
-→ sqlc: `GetProject`（`deleted_at IS NULL`）+ `ListProjectMembers`（`member JOIN project_member`）
+→ sqlc: `GetProject`（`deleted_at IS NULL`）+ `ListProjectMembers`（`member JOIN project_member`）+ `ListLabelsByProjectIds`（P1 组装 labels）
 
 ### PATCH /workspaces/:wid/projects/:projectId `P0`
 **请求**: 创建字段全可选；`memberIds` 为**全量替换**语义（传则整体覆盖，缺席不动；传 `[]` 或显式 `null` 均为清空全部成员）。字段合法性校验同 POST。→ **200**: `ProjectDetail`。
@@ -347,7 +370,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 ### GET /workspaces/:wid/tasks `P0`
 任务列表页主查询。**参数**: `filter=all|active|backlog`（默认 `all`；active = todo + in_progress）。
 **响应** `200`: `TaskRow[]`（平铺含子任务，按 status 枚举序、createdAt 排序）。
-→ sqlc: `ListTasksByWorkspace`：`deleted_at IS NULL` + statuses 数组可选筛选（§2.2）+ 固定排序 + `LEFT JOIN project/member` 组装 ProjectRef/assignee；走 `(workspace_id, parent_id)` 部分索引
+→ sqlc: `ListTasksByWorkspace`：`deleted_at IS NULL` + statuses 数组可选筛选（§2.2）+ 固定排序 + `LEFT JOIN project/member` 组装 ProjectRef/assignee；走 `(workspace_id, parent_id)` 部分索引；P1 增 `ListLabelsByTaskIds` 批量取标签 handler 组装（空为 []）
 
 ### POST /workspaces/:wid/tasks `P0`
 **请求**:
@@ -373,11 +396,11 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 ### GET /workspaces/:wid/tasks/:taskId `P0`
 **响应** `200`: `TaskDetail`（含 `parent: {id, title, status, doneCount, totalCount} | null`：父任务引用及其**后代**完成统计，供子任务详情页 "Sub-issue of" 行渲染；无父为 null）。
-→ sqlc: `GetTask`（`id + workspace_id + deleted_at IS NULL` 三条件，未命中即 404；`LEFT JOIN task pt` 取父 status/title + 顶层递归 CTE 聚合父任务后代统计，口径同 §4 徽标）
+→ sqlc: `GetTask`（`id + workspace_id + deleted_at IS NULL` 三条件，未命中即 404；`LEFT JOIN task pt` 取父 status/title + 顶层递归 CTE 聚合父任务后代统计，口径同 §4 徽标）；labels 经 `ListLabelsByTaskIds` 组装（P1）
 
 ### GET /workspaces/:wid/tasks/:taskId/subtree `P0`
 子任务区数据源。**响应** `200`: `TaskNode[]`（递归 CTE 取全部后代，按 depth、createdAt 排序；前端组装两层树并计算 x/y 徽标）。
-→ sqlc: `GetTaskSubtree`：单条 `WITH RECURSIVE`（锚点 = 自身 depth 0，输出 `depth > 0` 的全部后代；`ORDER BY depth, created_at`；`LEFT JOIN project/member` 取 project/assignee 引用；全程 `deleted_at IS NULL`）
+→ sqlc: `GetTaskSubtree`：单条 `WITH RECURSIVE`（锚点 = 自身 depth 0，输出 `depth > 0` 的全部后代；`ORDER BY depth, created_at`；`LEFT JOIN project/member` 取 project/assignee 引用；全程 `deleted_at IS NULL`）；P1 增 `ListLabelsByTaskIds` 组装子任务行 labels
 
 ### PATCH /workspaces/:wid/tasks/:taskId `P0`
 **请求**: `{ "title"?, "description"?, "status"?, "priority"?, "assigneeId"?, "dueDate"?, "projectId"? }`
@@ -394,8 +417,44 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 ---
 
-## 9. 后序阶段接口（占位索引）
+## 9. Label 接口（嵌套于 workspace） `P1`
 
-- **P1**：Label CRUD（`GET/POST/PATCH/DELETE /workspaces/:wid/labels?scope=task|project`）、任务/项目打标（`PUT .../tasks/:id/labels`、`PUT .../projects/:id/labels` 全量替换）、内置视图（纯前端，无接口）
-- **P2**：saved_view CRUD（`/workspaces/:wid/views`）、任务/项目列表的过滤器参数扩展
-- **P3+**：拖拽排序、行内编辑复用 PATCH（无新接口）
+> schema 已在初始迁移就绪（label / task_label / project_label，唯一约束 `(workspace_id, scope, name)`），本阶段无新迁移。label 硬删除，联结行由外键 CASCADE（DATABASE_DESIGN §5）。
+
+### GET /workspaces/:wid/labels `P1`
+**参数**: `scope=task|project` 可选，缺席返回该 workspace 全部标签。
+**响应** `200`: `Label[]`（created_at 升序）。
+→ sqlc: `ListLabelsByWorkspace` / `ListLabelsByWorkspaceAndScope`（scope 缺席走前者；枚举参数不可传空串——PG 枚举转换报错——故拆两条查询而非 NULL 哨兵）
+
+### POST /workspaces/:wid/labels `P1`
+**请求**: `{ "name": "必填", "color": "#EB5757 必填", "scope": "task|project 必填" }` → **201**: `Label`。
+同 scope 重名 → `409 NAME_CONFLICT`（唯一索引兜底，捕获 `23505` 映射）；name 为空、color 非 hex、scope 非法 → `400 VALIDATION_FAILED`。
+→ sqlc: `CreateLabel`
+
+### PATCH /workspaces/:wid/labels/:labelId `P1`
+**请求**: `{ "name"?, "color"? }`（presence 合并，§2.4）→ **200**: `Label`。重名 → `409` 同 POST。
+→ sqlc: `UpdateLabel`（全字段覆盖）
+
+### DELETE /workspaces/:wid/labels/:labelId `P1`
+硬删除；task_label / project_label 联结行由外键 CASCADE，任务/项目本体不受影响。→ **204**（同 workspace 删除，幂等）。
+→ sqlc: `DeleteLabel`
+
+### PUT /workspaces/:wid/tasks/:taskId/labels `P1`
+**请求**: `{ "labelIds": ["uuid"] }`（**全量替换**语义：传则整体覆盖，空数组 = 清空全部标签）。
+规则（R6）：labelIds 含非本 workspace 标签 → `400 CROSS_WORKSPACE`；含 scope='project' 标签 → `400 LABEL_SCOPE_MISMATCH`；任务不存在（含已软删、跨工作区）→ `404`。
+**200**: `TaskDetail`（带新 labels，前端直接更新缓存）。
+→ sqlc: `DeleteTaskLabels` + `AddTaskLabels`（同一事务，见 §2.5）；R6 校验经 `ListLabelScopesByIds`（label 包 `ValidateAndDedupeLabelIDs`：去重 + 命中行数不足 = CROSS_WORKSPACE、scope 不符 = LABEL_SCOPE_MISMATCH）
+
+### PUT /workspaces/:wid/projects/:projectId/labels `P1`
+同任务打标（scope='task' 标签 → `LABEL_SCOPE_MISMATCH`；项目不存在含已软删 → `404`）。**200**: `ProjectDetail`。
+→ sqlc: `DeleteProjectLabels` + `AddProjectLabels`（同一事务）
+
+### 创建时 labelIds `P1`
+POST /tasks 与 POST /projects 请求体新增可选 `labelIds: []`，校验规则同上述 PUT，联结行与创建同一事务写入（见 §2.5）。**两个 PATCH 接口均不含 label 字段**：标签变更统一走上表 PUT 子资源，避免两套替换语义入口。
+
+---
+
+## 10. 后序阶段接口索引
+
+- **P2**：saved_view CRUD（`/workspaces/:wid/views`）；列表接口筛选参数扩展（statuses 数组机制照抄扩展 `label_ids` / `assignee_ids` 等，§2.2）；展示选项（分组/排序/展示属性）纯前端无接口（§2.9）
+- **P3+**：拖拽排序、行内编辑复用 PATCH（无新接口）；标签就地创建复用 POST /labels
