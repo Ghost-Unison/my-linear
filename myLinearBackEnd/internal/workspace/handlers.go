@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -37,11 +36,13 @@ func CreateWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
 		var req CreateWorkspaceDTO
-		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		// Decoder原生写法 - 不如gin的 ShouldBindJSON
+		//if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
+		if err := c.ShouldBindJSON(&req); err != nil {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
 			return
 		}
-		if req.Name == "" {
+		if strings.TrimSpace(req.Name) == "" {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")
 			return
 		}
@@ -89,7 +90,15 @@ func UpdateWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//查
+		//先解析请求体：畸形请求不该白跑一次数据库，也保证“畸形 body + 不存在 id”
+		//统一返 400 而非 404（与事务型 handler 的顺序一致，api.md §2.5 事务边界）
+		var req UpdateWorkspaceDTO
+		if err := c.ShouldBindJSON(&req); err != nil {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
+			return
+		}
+
+		//查——读-改-写的基准行（单条写，刻意不开事务，api.md §2.4）
 		workspace, err := queries.GetWorkspace(c.Request.Context(), workspaceUUID)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -101,11 +110,6 @@ func UpdateWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//校验
-		var req UpdateWorkspaceDTO
-		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
-			return
-		}
 		if req.Name.Set {
 			if !req.Name.Valid || strings.TrimSpace(req.Name.Value) == "" {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")

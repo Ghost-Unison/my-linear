@@ -70,7 +70,9 @@ DELETE FROM project_member WHERE project_id = $1;
 
 
 -- name: SoftDeleteProject :execrows
-UPDATE project SET deleted_at=NOW() WHERE id = $1 AND workspace_id = $2;
+-- 必须带 deleted_at IS NULL：否则重复删除已软删项目仍影响 1 行 → 返 204，
+-- 而 api.md §7 约定“目标不存在（含已软删、跨工作区）→ 404”（锚点条件同 SoftDeleteTaskSubtree）
+UPDATE project SET deleted_at=NOW() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL;
 
 
 -- name: DetachProjectTasks :exec

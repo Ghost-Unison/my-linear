@@ -67,23 +67,6 @@ type ProjectDetail struct {
 	Members     []member.MemberRef `json:"members"`
 }
 
-// 可空 lead 三元组转 MemberRef；leadID 为 NULL（无负责人）时整体返回 nil，禁止直接解引用可空指针
-func toLeadRef(leadID *uuid.UUID, name, avatarColor *string) *member.MemberRef {
-	if leadID == nil {
-		return nil
-	}
-	// leadID 非空时 JOIN 必命中（member.name/avatar_color NOT NULL avatar_color前端应该会传默认值，不会为空），
-	// 判空仅作悬空引用兜底，防止异常数据 panic
-	n, a := "", ""
-	if name != nil {
-		n = *name
-	}
-	if avatarColor != nil {
-		a = *avatarColor
-	}
-	return &member.MemberRef{ID: *leadID, Name: n, AvatarColor: a}
-}
-
 // toProjectRow 两种 sqlc row（列表 ListProjectsByWorkspaceRow / 详情 GetProjectRow）统一转为 ProjectRow，
 // 与 task.toTaskRow 的类型开关写法保持一致，调用方无需关心底层查询类型。
 //
@@ -103,7 +86,7 @@ func toProjectRow(pr any, labelsRef []label.LabelRef) ProjectRow {
 			Name:       v.Name,
 			Status:     string(v.Status),
 			Priority:   int(v.Priority),
-			Lead:       toLeadRef(v.LeadID, v.LeadName, v.LeadAvatarColor),
+			Lead:       member.ToMemberRef(v.LeadID, v.LeadName, v.LeadAvatarColor),
 			StartDate:  v.StartDate,
 			TargetDate: v.TargetDate,
 			TaskCount:  int(v.TaskCount),
@@ -117,7 +100,7 @@ func toProjectRow(pr any, labelsRef []label.LabelRef) ProjectRow {
 			Name:       v.Name,
 			Status:     string(v.Status),
 			Priority:   int(v.Priority),
-			Lead:       toLeadRef(v.LeadID, v.LeadName, v.LeadAvatarColor),
+			Lead:       member.ToMemberRef(v.LeadID, v.LeadName, v.LeadAvatarColor),
 			StartDate:  v.StartDate,
 			TargetDate: v.TargetDate,
 			TaskCount:  int(v.TaskCount),
@@ -127,5 +110,17 @@ func toProjectRow(pr any, labelsRef []label.LabelRef) ProjectRow {
 		}
 	default:
 		panic(fmt.Sprintf("project.toProjectRow: unsupported type %T", v))
+	}
+}
+
+// toProjectDetail 详情装配：ProjectRow + description + members。
+// 两个内嵌数组都收原始 sqlc 行、在此统一转 Ref，调用方不必记住哪个要预先转换；
+// nil 安全由 label.ToLabelRefs / member.ToMemberRefs 内部的 make 保证（api.md §4 空为 []）。
+// 与 toProjectRow 收 []LabelRef 不同是必然的：列表路径的 labels 来自 map 分组，已是 Ref
+func toProjectDetail(pr store.GetProjectRow, labels []store.Label, members []store.Member) ProjectDetail {
+	return ProjectDetail{
+		ProjectRow:  toProjectRow(pr, label.ToLabelRefs(labels)),
+		Description: pr.Description,
+		Members:     member.ToMemberRefs(members),
 	}
 }

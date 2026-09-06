@@ -51,7 +51,7 @@ func CreateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
 			return
 		}
-		if req.Name == "" || req.AvatarColor == "" {
+		if strings.TrimSpace(req.Name) == "" || req.AvatarColor == "" {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 与 color 为必填字段")
 			return
 		}
@@ -94,7 +94,15 @@ func UpdateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//查（id + workspace_id 双条件，防跨 workspace 访问，api.md §2.3）
+		//先解析请求体：畸形请求不该白跑一次数据库，也保证“畸形 body + 不存在 id”
+		//统一返 400 而非 404（与事务型 handler 的顺序一致，api.md §2.5 事务边界）
+		var req UpdateMemberDTO
+		if err := c.ShouldBindJSON(&req); err != nil {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
+			return
+		}
+
+		//查（id + workspace_id 双条件，防跨 workspace 访问，api.md §2.3）——读-改-写的基准行
 		member, err := queries.GetMember(c.Request.Context(), store.GetMemberParams{
 			ID:          memberUUID,
 			WorkspaceID: workspaceUUID,
@@ -109,12 +117,6 @@ func UpdateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//校验
-		var req UpdateMemberDTO
-		if err := c.ShouldBindJSON(&req); err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
-			return
-		}
-
 		if req.Name.Set {
 			if !req.Name.Valid || strings.TrimSpace(req.Name.Value) == "" {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")
@@ -130,16 +132,14 @@ func UpdateMember(pool *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 		if req.AvatarColor.Set {
+			// avatar_color 虽为 NOT NULL DEFAULT ''，但空串过不了 IsHexColor——写空串等于
+			// 往库里塞本 handler 自己拒绝的非法值，故显式 null 一律 400（api.md §2.4）
 			if !req.AvatarColor.Valid || !handler.IsHexColor(req.AvatarColor.Value) {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "avatarColor 为必填字段且应符合 HEX 颜色规范")
 				return
 			}
-			// avatar_color 为 NOT NULL DEFAULT '' 但是前端一般一定会传一个颜色
-			if req.AvatarColor.Valid {
-				member.AvatarColor = req.AvatarColor.Value
-			} else {
-				member.AvatarColor = ""
-			}
+			//上方已拦掉 !Valid，此处 Valid 恒真
+			member.AvatarColor = req.AvatarColor.Value
 		}
 
 		//更新

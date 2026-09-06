@@ -247,23 +247,36 @@ func (q *Queries) IfTaskExist(ctx context.Context, arg IfTaskExistParams) (bool,
 	return exists, err
 }
 
-const listTaskLabels = `-- name: ListTaskLabels :many
-SELECT l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
+const listLabelsByTaskIds = `-- name: ListLabelsByTaskIds :many
+SELECT tl.task_id, l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
 FROM task_label tl
 JOIN label l ON tl.label_id = l.id
-WHERE tl.task_id = $1
+WHERE tl.task_id = ANY($1::uuid[])
+ORDER BY tl.task_id, l.created_at
 `
 
-func (q *Queries) ListTaskLabels(ctx context.Context, taskID uuid.UUID) ([]Label, error) {
-	rows, err := q.db.Query(ctx, listTaskLabels, taskID)
+type ListLabelsByTaskIdsRow struct {
+	TaskID      uuid.UUID  `json:"task_id"`
+	ID          uuid.UUID  `json:"id"`
+	WorkspaceID uuid.UUID  `json:"workspace_id"`
+	Scope       LabelScope `json:"scope"`
+	Name        string     `json:"name"`
+	Color       string     `json:"color"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (q *Queries) ListLabelsByTaskIds(ctx context.Context, taskIds []uuid.UUID) ([]ListLabelsByTaskIdsRow, error) {
+	rows, err := q.db.Query(ctx, listLabelsByTaskIds, taskIds)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Label
+	var items []ListLabelsByTaskIdsRow
 	for rows.Next() {
-		var i Label
+		var i ListLabelsByTaskIdsRow
 		if err := rows.Scan(
+			&i.TaskID,
 			&i.ID,
 			&i.WorkspaceID,
 			&i.Scope,
@@ -282,35 +295,24 @@ func (q *Queries) ListTaskLabels(ctx context.Context, taskID uuid.UUID) ([]Label
 	return items, nil
 }
 
-const listTaskLabelsByTaskIds = `-- name: ListTaskLabelsByTaskIds :many
-SELECT tl.task_id, l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
+const listTaskLabels = `-- name: ListTaskLabels :many
+SELECT l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
 FROM task_label tl
 JOIN label l ON tl.label_id = l.id
-WHERE tl.task_id = ANY($1::uuid[])
+WHERE tl.task_id = $1
+ORDER BY l.created_at
 `
 
-type ListTaskLabelsByTaskIdsRow struct {
-	TaskID      uuid.UUID  `json:"task_id"`
-	ID          uuid.UUID  `json:"id"`
-	WorkspaceID uuid.UUID  `json:"workspace_id"`
-	Scope       LabelScope `json:"scope"`
-	Name        string     `json:"name"`
-	Color       string     `json:"color"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
-}
-
-func (q *Queries) ListTaskLabelsByTaskIds(ctx context.Context, taskIds []uuid.UUID) ([]ListTaskLabelsByTaskIdsRow, error) {
-	rows, err := q.db.Query(ctx, listTaskLabelsByTaskIds, taskIds)
+func (q *Queries) ListTaskLabels(ctx context.Context, taskID uuid.UUID) ([]Label, error) {
+	rows, err := q.db.Query(ctx, listTaskLabels, taskID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListTaskLabelsByTaskIdsRow
+	var items []Label
 	for rows.Next() {
-		var i ListTaskLabelsByTaskIdsRow
+		var i Label
 		if err := rows.Scan(
-			&i.TaskID,
 			&i.ID,
 			&i.WorkspaceID,
 			&i.Scope,

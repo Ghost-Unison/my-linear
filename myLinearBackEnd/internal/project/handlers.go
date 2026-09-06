@@ -10,7 +10,6 @@ import (
 
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
-	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -44,24 +43,17 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		for _, project := range projects {
 			projectIds = append(projectIds, project.ID)
 		}
-		projectLabels, err := queries.ListLabelsByProjectIds(c.Request.Context(), projectIds)
-		if err != nil {
-			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目标签失败")
+		projectLabelMap, ok := buildProjectLabelMap(c, queries, projectIds)
+		if !ok {
 			return
-		}
-		projectLabelMap := make(map[uuid.UUID][]label.LabelRef, len(projectLabels))
-		for _, projectLabel := range projectLabels {
-			projectLabelMap[projectLabel.ProjectID] = append(projectLabelMap[projectLabel.ProjectID], label.NewLabelRef(projectLabel.ID, projectLabel.Name, projectLabel.Color))
 		}
 
 		// convert to response format
-		resp := make([]ProjectRow, 0, len(projects))
+		projectRows := make([]ProjectRow, 0, len(projects))
 		for _, item := range projects {
-			//匹配补充labelsRef字段
-			resp = append(resp, toProjectRow(item, projectLabelMap[item.ID]))
+			projectRows = append(projectRows, toProjectRow(item, projectLabelMap[item.ID]))
 		}
-		c.JSON(http.StatusOK, resp)
-
+		c.JSON(http.StatusOK, projectRows)
 	}
 }
 
@@ -79,7 +71,7 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
 			return
 		}
-		if req.Name == "" {
+		if strings.TrimSpace(req.Name) == "" {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")
 			return
 		}
@@ -119,18 +111,9 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		if !checkMemberLegal(c, q, workspaceUUID, req.MemberIds) {
 			return
 		}
-		//labelIds同样处理 -去重+校验
-		handledLabelIds, err := label.ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceUUID, store.LabelScopeProject, req.LabelIds)
-		if err != nil {
-			if errors.Is(err, label.ErrLabelCrossWorkspace) {
-				handler.Error(c, http.StatusBadRequest, "CROSS_WORKSPACE", "labelIds 中包含不属于本工作区的标签")
-				return
-			}
-			if errors.Is(err, label.ErrLabelScopeMismatch) {
-				handler.Error(c, http.StatusBadRequest, "LABEL_SCOPE_MISMATCH", "labelIds 中包含 scope 不是 project 的标签")
-				return
-			}
-			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "校验标签失败")
+		//labelIds同样处理 -去重+校验（R6；错误码映射统一在 label.CheckLabelIDsLegal）
+		handledLabelIds, ok := label.CheckLabelIDsLegal(c, q, workspaceUUID, store.LabelScopeProject, req.LabelIds)
+		if !ok {
 			return
 		}
 
@@ -175,7 +158,7 @@ func CreateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		// 提交后重读，装配 ProjectDetail并返回
-		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, created.ID)
+		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, created.ID)
 		if !ok {
 			return
 		}
@@ -196,7 +179,7 @@ func GetProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//get - queryProjectDetail
-		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, projectUUID)
+		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, projectUUID)
 		if !ok {
 			return
 		}
@@ -261,24 +244,22 @@ func UpdateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 		if req.Status.Set {
-			if req.Status.Valid {
-				if !store.ProjectStatus(req.Status.Value).Valid() {
-					handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "status 不符合规范")
-					return
-				}
-				got.Status = store.ProjectStatus(req.Status.Value)
+			// status 是 NOT NULL 枚举，没有“空”的落库形态：显式 null 一律 400（api.md §2.4）。
+			// 不先判 Valid 虽然也能因 "" 不是合法枚举而报错，但意图不明确
+			if !req.Status.Valid || !store.ProjectStatus(req.Status.Value).Valid() {
+				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "status 不符合规范")
+				return
 			}
-			//一定有值，不可能设置为空
+			got.Status = store.ProjectStatus(req.Status.Value)
 		}
 		if req.Priority.Set {
-			if req.Priority.Valid {
-				if req.Priority.Value < 0 || req.Priority.Value > 4 {
-					handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "priority 不符合规范")
-					return
-				}
-				got.Priority = int16(req.Priority.Value)
+			// priority 必须先判 Valid：显式 null 时 Value 是零值 0，而 0 能通过 0~4 范围校验
+			// 且本身是合法优先级（No priority），不拦就会静默把优先级改成 0
+			if !req.Priority.Valid || req.Priority.Value < 0 || req.Priority.Value > 4 {
+				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "priority 不符合规范")
+				return
 			}
-			//一定有值，不可能设置为空
+			got.Priority = int16(req.Priority.Value)
 		}
 		if req.LeadId.Set {
 			if req.LeadId.Valid {
@@ -377,7 +358,7 @@ func UpdateProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		// 提交后重读，装配 ProjectDetail（UpdateProject 返回裸 Project，缺 taskCount/lead，重读更省事）
-		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, projectUUID)
+		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, projectUUID)
 		if !ok {
 			return
 		}
@@ -447,8 +428,8 @@ var projectStatusRank = map[store.ProjectStatus]int{
 	store.ProjectStatusCanceled:   4,
 }
 
-// project根据条件排序
-func sortProjects(projects []store.ListProjectsByWorkspaceRow, field, order string) []store.ListProjectsByWorkspaceRow {
+// project根据条件排序：slices.SortStableFunc 原地排序，无返回值（不另建切片）
+func sortProjects(projects []store.ListProjectsByWorkspaceRow, field, order string) {
 	asc := order == "asc"
 	// slices.SortFunc 比较函数返回 int：负数表示 a 排在 b 前，降序时取反
 	// time.Time 不满足 cmp.Ordered 约束，需用其 Compare 方法
@@ -469,13 +450,14 @@ func sortProjects(projects []store.ListProjectsByWorkspaceRow, field, order stri
 		}
 		return -c
 	})
-	return projects
 }
 
 // 校验与装配 helper：失败时均已写好错误响应并返回 false / ok=false，
 // 调用方必须 `if !ok { return }`——helper 内的 return 只退出 helper，不会中断调用方
 
-// dedupeUUIDs 去重：slices.Compact 只压缩连续的重复元素，须先排序
+// dedupeUUIDs 去重：slices.Compact 只压缩连续的重复元素，须先排序。
+// 注意：原地排序，会打乱入参顺序（调用方传的是请求 DTO 自己的切片，且
+// ListProjectMembers 按 m.name 排序，成员展示顺序与插入顺序无关，故无影响）。
 // uuid.UUID 是裸的 [16]byte 数组，没有 Compare 方法（不同于 time.Time），
 // 且 google/uuid v1.6.0 也没有包级 uuid.Compare 函数，故用 bytes.Compare 按字节比较
 func dedupeUUIDs(ids []uuid.UUID) []uuid.UUID {
@@ -512,10 +494,13 @@ func checkMemberLegal(c *gin.Context, queries *store.Queries, workspaceUUID uuid
 		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取工作区成员列表失败")
 		return false
 	}
+	// 先建索引再查：对每个 memberID 做 slices.ContainsFunc 全量扫描是 O(n×m)
+	legalSet := make(map[uuid.UUID]struct{}, len(legalMembers))
+	for _, m := range legalMembers {
+		legalSet[m.ID] = struct{}{}
+	}
 	for _, memberID := range memberIds {
-		if !slices.ContainsFunc(legalMembers, func(m store.Member) bool {
-			return m.ID == memberID
-		}) {
+		if _, ok := legalSet[memberID]; !ok {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "包含非法成员ID")
 			return false
 		}
@@ -523,8 +508,9 @@ func checkMemberLegal(c *gin.Context, queries *store.Queries, workspaceUUID uuid
 	return true
 }
 
-// buildProjectDetail 重读项目并装配 ProjectDetail（Create/Get/Update 统一入口）
-func BuildProjectDetail(c *gin.Context, queries *store.Queries, workspaceUUID, projectUUID uuid.UUID) (ProjectDetail, bool) {
+// buildProjectDetail 重读项目并装配 ProjectDetail（Create/Get/Update/PUT labels 统一入口）。
+// 包内私有：四个调用方均在本包（PUT labels 也放本包以复用本函数，见 UpdateProjectLabels 注释）
+func buildProjectDetail(c *gin.Context, queries *store.Queries, workspaceUUID, projectUUID uuid.UUID) (ProjectDetail, bool) {
 	got, err := queries.GetProject(c.Request.Context(), store.GetProjectParams{
 		WorkspaceID: workspaceUUID,
 		ID:          projectUUID,
@@ -537,27 +523,42 @@ func BuildProjectDetail(c *gin.Context, queries *store.Queries, workspaceUUID, p
 		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目失败")
 		return ProjectDetail{}, false
 	}
+	//获取project members
 	members, err := queries.ListProjectMembers(c.Request.Context(), projectUUID)
 	if err != nil {
 		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目成员失败")
 		return ProjectDetail{}, false
 	}
-	//获取project Label - 是 sqlc 所有 :many 方法的统一行为，没查到的话labels是nil 而不是空切片
+	//获取project labels（sqlc :many 零行时返 nil，由 toProjectDetail 内部的 ToLabelRefs 兜底为 []）
 	labels, err := queries.ListProjectLabels(c.Request.Context(), projectUUID)
 	if err != nil {
 		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目标签失败")
 		return ProjectDetail{}, false
 	}
-	detail := ProjectDetail{
-		ProjectRow:  toProjectRow(got, label.ToLabelRefs(labels)),
-		Description: got.Description,
-		Members:     member.ToMemberRefs(members),
-	}
+	detail := toProjectDetail(got, labels, members)
 	return detail, true
 }
 
+// buildProjectLabelMap 一次取回全部项目的标签并按 projectId 分组（ListProjectsByWorkspace 用），
+// 避免逐行查标签的 N+1；与 task.buildTaskLabelMap 同形。
+// 组内 created_at 升序由 SQL 的 ORDER BY pl.project_id, l.created_at 保证（api.md §4），handler 只做 append 不重排；
+// 无标签的项目在 map 中无 key，由 toProjectRow 兜底为 []。
+// 失败时已写入 500 响应，返回 ok=false，调用方直接 return（同 buildProjectDetail 约定）
+func buildProjectLabelMap(c *gin.Context, queries *store.Queries, projectIds []uuid.UUID) (map[uuid.UUID][]label.LabelRef, bool) {
+	projectLabels, err := queries.ListLabelsByProjectIds(c.Request.Context(), projectIds)
+	if err != nil {
+		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目标签失败")
+		return nil, false
+	}
+	projectLabelMap := make(map[uuid.UUID][]label.LabelRef, len(projectLabels))
+	for _, projectLabel := range projectLabels {
+		projectLabelMap[projectLabel.ProjectID] = append(projectLabelMap[projectLabel.ProjectID], label.NewLabelRef(projectLabel.ID, projectLabel.Name, projectLabel.Color))
+	}
+	return projectLabelMap, true
+}
+
 // UpdateProjectLabels 全量替换打标（api.md §9 PUT /projects/:id/labels）。
-// 放在 project 包：需复用 BuildProjectDetail 装配响应；依赖方向 project → label，避免循环依赖
+// 放在 project 包：需复用 buildProjectDetail 装配响应；依赖方向 project → label，避免循环依赖
 func UpdateProjectLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
@@ -603,17 +604,8 @@ func UpdateProjectLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 		if req.LabelIds.Set {
 			if req.LabelIds.Valid {
 				//合法性校验（R6）：同 workspace + scope=project；去重避免联结表主键冲突
-				ids, err := label.ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceUUID, store.LabelScopeProject, req.LabelIds.Value)
-				if err != nil {
-					if errors.Is(err, label.ErrLabelCrossWorkspace) {
-						handler.Error(c, http.StatusBadRequest, "CROSS_WORKSPACE", "labelIds 中包含不属于本工作区的标签")
-						return
-					}
-					if errors.Is(err, label.ErrLabelScopeMismatch) {
-						handler.Error(c, http.StatusBadRequest, "LABEL_SCOPE_MISMATCH", "labelIds 中包含 scope 不是 project 的标签")
-						return
-					}
-					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "校验标签失败")
+				ids, ok := label.CheckLabelIDsLegal(c, q, workspaceUUID, store.LabelScopeProject, req.LabelIds.Value)
+				if !ok {
 					return
 				}
 				//删除
@@ -644,7 +636,7 @@ func UpdateProjectLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//提交后重新获取projectDetail
-		projectDetail, ok := BuildProjectDetail(c, queries, workspaceUUID, projectUUID)
+		projectDetail, ok := buildProjectDetail(c, queries, workspaceUUID, projectUUID)
 		if !ok {
 			return
 		}

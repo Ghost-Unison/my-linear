@@ -25,14 +25,16 @@ ORDER BY CASE t.status WHEN 'backlog' THEN 1 WHEN 'todo' THEN 2 WHEN 'in_progres
 SELECT l.*
 FROM task_label tl
 JOIN label l ON tl.label_id = l.id
-WHERE tl.task_id = $1;
+WHERE tl.task_id = $1
+ORDER BY l.created_at;
 
 
--- name: ListTaskLabelsByTaskIds :many
+-- name: ListLabelsByTaskIds :many
 SELECT tl.task_id, l.*
 FROM task_label tl
 JOIN label l ON tl.label_id = l.id
-WHERE tl.task_id = ANY(sqlc.arg('task_ids')::uuid[]);
+WHERE tl.task_id = ANY(sqlc.arg('task_ids')::uuid[])
+ORDER BY tl.task_id, l.created_at;
 
 
 -- name: CreateTask :one

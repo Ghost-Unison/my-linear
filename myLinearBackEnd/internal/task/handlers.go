@@ -16,7 +16,7 @@ import (
 )
 
 // 获取项目下的任务，不放在project下，放在project下需要引入task，会造成循环依赖
-func GetTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
+func ListTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
 		workspaceUUID, ok := handler.ParseUUIDParam(c, "workspaceId")
@@ -27,6 +27,7 @@ func GetTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		if !ok {
 			return
 		}
+
 		//query
 		tasks, err := queries.ListTasksByProject(c.Request.Context(), store.ListTasksByProjectParams{
 			WorkspaceID: workspaceUUID,
@@ -37,9 +38,19 @@ func GetTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		var taskRows = make([]TaskRow, 0, len(tasks))
+		// 批量取标签并按 taskId 分组
+		taskIds := make([]uuid.UUID, 0, len(tasks))
 		for _, task := range tasks {
-			taskRows = append(taskRows, toTaskRow(task))
+			taskIds = append(taskIds, task.ID)
+		}
+		taskLabelMap, ok := buildTaskLabelMap(c, queries, taskIds)
+		if !ok {
+			return
+		}
+
+		taskRows := make([]TaskRow, 0, len(tasks))
+		for _, task := range tasks {
+			taskRows = append(taskRows, toTaskRow(task, taskLabelMap[task.ID]))
 		}
 		c.JSON(http.StatusOK, taskRows)
 	}
@@ -81,12 +92,22 @@ func ListTasksByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 
 		//没有自定义字段排序，在sql中默认按status和createTime升序固定排序
 
-		// convert to response format
-		resp := make([]TaskRow, 0, len(tasks))
+		// 批量取标签并按 taskId 分组
+		taskIds := make([]uuid.UUID, 0, len(tasks))
 		for _, task := range tasks {
-			resp = append(resp, toTaskRow(task))
+			taskIds = append(taskIds, task.ID)
 		}
-		c.JSON(http.StatusOK, resp)
+		taskLabelMap, ok := buildTaskLabelMap(c, queries, taskIds)
+		if !ok {
+			return
+		}
+
+		// convert to response format
+		taskRows := make([]TaskRow, 0, len(tasks))
+		for _, task := range tasks {
+			taskRows = append(taskRows, toTaskRow(task, taskLabelMap[task.ID]))
+		}
+		c.JSON(http.StatusOK, taskRows)
 	}
 }
 
@@ -104,16 +125,35 @@ func CreateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
 			return
 		}
-		if req.Title == "" {
+		if strings.TrimSpace(req.Title) == "" {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "title 为必填字段")
 			return
 		}
+		//校验枚举值是否合法 - status一定有值
+		if !store.TaskStatus(req.Status).Valid() {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "status 不符合规范")
+			return
+		}
+		//priority一定有值 - 整数 0 1 2 3 4
+		if req.Priority < 0 || req.Priority > 4 {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "priority 不符合规范")
+			return
+		}
+
+		//beginTx
+		tx, err := pool.Begin(c.Request.Context())
+		if err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务开始失败")
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) // Commit 后调用是 no-op，兜底
+		q := store.New(pool).WithTx(tx)
 
 		//如果传了parentId - 则projectId和workspaceId取父任务的，忽略传入的projectId和workspaceId
 		//传了projectId,需要校验 projectId 是否属于 workspaceId
 		//传assigneeId，校验是否为本工作区成员（R3 仅工作区级，与项目 lead/members 解绑）
 		if req.ParentId != nil && *req.ParentId != uuid.Nil {
-			parentTask, err := queries.GetTask(c.Request.Context(), store.GetTaskParams{
+			parentTask, err := q.GetTask(c.Request.Context(), store.GetTaskParams{
 				ID:          *req.ParentId,
 				WorkspaceID: workspaceUUID,
 			})
@@ -127,7 +167,7 @@ func CreateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 			}
 			req.ProjectId = parentTask.ProjectID
 		} else if req.ProjectId != nil && *req.ProjectId != uuid.Nil {
-			_, err := queries.GetProject(c.Request.Context(), store.GetProjectParams{
+			_, err := q.GetProject(c.Request.Context(), store.GetProjectParams{
 				ID:          *req.ProjectId,
 				WorkspaceID: workspaceUUID,
 			})
@@ -141,23 +181,19 @@ func CreateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 		if req.AssigneeId != nil && *req.AssigneeId != uuid.Nil {
-			if !checkAssigneeLegal(c, queries, workspaceUUID, *req.AssigneeId) {
+			if !checkAssigneeLegal(c, q, workspaceUUID, *req.AssigneeId) {
 				return
 			}
 		}
 
-		//校验枚举值是否合法 - status一定有值
-		if !store.TaskStatus(req.Status).Valid() {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "status 不符合规范")
-			return
-		}
-		//priority一定有值 - 整数 0 1 2 3 4
-		if req.Priority < 0 || req.Priority > 4 {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "priority 不符合规范")
+		//labelIds同样处理 -去重+校验（R6；错误码映射统一在 label.CheckLabelIDsLegal）
+		handledLabelIds, ok := label.CheckLabelIDsLegal(c, q, workspaceUUID, store.LabelScopeTask, req.LabelIds)
+		if !ok {
 			return
 		}
 
-		task, err := queries.CreateTask(c.Request.Context(), store.CreateTaskParams{
+		//CreateTask
+		task, err := q.CreateTask(c.Request.Context(), store.CreateTaskParams{
 			WorkspaceID: workspaceUUID,
 			ProjectID:   req.ProjectId,
 			ParentID:    req.ParentId,
@@ -173,8 +209,22 @@ func CreateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		//AddTaskLabels
+		if err := q.AddTaskLabels(c.Request.Context(), store.AddTaskLabelsParams{
+			TaskID:   task.ID,
+			LabelIds: handledLabelIds,
+		}); err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "添加任务标签失败")
+			return
+		}
+
+		if err := tx.Commit(c.Request.Context()); err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "创建任务-数据库事务提交失败")
+			return
+		}
+
 		//提交后重读，组装TaskDetail并返回
-		taskDetail, ok := BuildTaskDetail(c, queries, workspaceUUID, task.ID)
+		taskDetail, ok := buildTaskDetail(c, queries, workspaceUUID, task.ID)
 		if !ok {
 			return
 		}
@@ -195,7 +245,7 @@ func GetTask(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//get - queryTaskDetail
-		taskDetail, ok := BuildTaskDetail(c, queries, workspaceUUID, taskUUID)
+		taskDetail, ok := buildTaskDetail(c, queries, workspaceUUID, taskUUID)
 		if !ok {
 			return
 		}
@@ -215,22 +265,23 @@ func GetTaskSubtree(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//先GetTask判断锚点
-		_, err := queries.GetTask(c.Request.Context(), store.GetTaskParams{
+		//先判断锚点是否存在：GetTask 带 3 个 LEFT JOIN + 父任务统计递归 CTE，仅用于存在性判断太重，
+		//改用 IfTaskExist（EXISTS 点查，同 UpdateTaskLabels）
+		taskExist, err := queries.IfTaskExist(c.Request.Context(), store.IfTaskExistParams{
 			ID:          taskUUID,
 			WorkspaceID: workspaceUUID,
 		})
 		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				handler.Error(c, http.StatusNotFound, "NOT_FOUND", "锚点任务不存在")
-				return
-			}
 			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取任务失败")
+			return
+		}
+		if !taskExist {
+			handler.Error(c, http.StatusNotFound, "NOT_FOUND", "锚点任务不存在")
 			return
 		}
 
 		//查询任务及其子任务
-		wholeTask, err := queries.GetTaskSubtree(c.Request.Context(), store.GetTaskSubtreeParams{
+		wholeTasks, err := queries.GetTaskSubtree(c.Request.Context(), store.GetTaskSubtreeParams{
 			WorkspaceID: workspaceUUID,
 			ID:          taskUUID,
 		})
@@ -238,11 +289,22 @@ func GetTaskSubtree(pool *pgxpool.Pool) gin.HandlerFunc {
 			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取任务失败")
 			return
 		}
-		resp := make([]TaskNode, 0, len(wholeTask))
-		for _, node := range wholeTask {
-			resp = append(resp, toTaskNode(node))
+
+		// 批量取标签并按 taskId 分组
+		taskIds := make([]uuid.UUID, 0, len(wholeTasks))
+		for _, task := range wholeTasks {
+			taskIds = append(taskIds, task.ID)
 		}
-		c.JSON(http.StatusOK, resp)
+		taskLabelMap, ok := buildTaskLabelMap(c, queries, taskIds)
+		if !ok {
+			return
+		}
+
+		taskNodes := make([]TaskNode, 0, len(wholeTasks))
+		for _, node := range wholeTasks {
+			taskNodes = append(taskNodes, toTaskNode(node, taskLabelMap[node.ID]))
+		}
+		c.JSON(http.StatusOK, taskNodes)
 	}
 }
 
@@ -303,20 +365,21 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 			}
 		}
 		if req.Status.Set {
-			if !store.TaskStatus(req.Status.Value).Valid() {
+			// status 是 NOT NULL 枚举，没有“空”的落库形态：显式 null 一律 400（api.md §2.4）
+			if !req.Status.Valid || !store.TaskStatus(req.Status.Value).Valid() {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "status 不符合规范")
 				return
 			}
 			got.Status = store.TaskStatus(req.Status.Value)
-			//一定有值，不可能设置为空
 		}
 		if req.Priority.Set {
-			if req.Priority.Value < 0 || req.Priority.Value > 4 {
+			// priority 必须先判 Valid：显式 null 时 Value 是零值 0，而 0 能通过 0~4 范围校验
+			// 且本身是合法优先级（No priority），不拦就会静默把优先级改成 0
+			if !req.Priority.Valid || req.Priority.Value < 0 || req.Priority.Value > 4 {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "priority 不符合规范")
 				return
 			}
 			got.Priority = int16(req.Priority.Value)
-			//一定有值，不可能设置为空
 		}
 		if req.DueDate.Set {
 			got.DueDate = req.DueDate.ValuePtr()
@@ -387,7 +450,7 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//提交后重读
-		taskDetail, ok := BuildTaskDetail(c, queries, workspaceUUID, taskUUID)
+		taskDetail, ok := buildTaskDetail(c, queries, workspaceUUID, taskUUID)
 		if !ok {
 			return
 		}
@@ -427,7 +490,6 @@ func SoftDeleteTask(pool *pgxpool.Pool) gin.HandlerFunc {
 
 // util functions
 
-// helper
 // checkAssigneeLegal 校验 assignee 属于本工作区（R3 仅工作区级校验：与项目 lead/members 解绑，对齐 Linear）
 // GetMember 带 id + workspace_id 双条件点查；未命中即 400 INVALID_ASSIGNEE
 func checkAssigneeLegal(c *gin.Context, queries *store.Queries, workspaceUUID, assigneeID uuid.UUID) bool {
@@ -446,8 +508,28 @@ func checkAssigneeLegal(c *gin.Context, queries *store.Queries, workspaceUUID, a
 	return true
 }
 
-// buildTaskDetail 重读任务并装配 TaskDetail (Create/Get/Update统一入口)
-func BuildTaskDetail(c *gin.Context, queries *store.Queries, workspaceUUID, taskUUID uuid.UUID) (TaskDetail, bool) {
+// buildTaskLabelMap 一次取回全部任务的标签并按 taskId 分组（ListTasksByProject /
+// ListTasksByWorkspace / GetTaskSubtree 共用），避免逐行查标签的 N+1。
+// 组内 created_at 升序由 SQL 的 ORDER BY tl.task_id, l.created_at 保证（api.md §4），
+// handler 只做 append 不重排；无标签的任务在 map 中无 key，由 toTaskRow/toTaskNode 兜底为 []。
+// 失败时已写入 500 响应，返回 ok=false，调用方直接 return（同 buildTaskDetail 约定）
+func buildTaskLabelMap(c *gin.Context, queries *store.Queries, taskIds []uuid.UUID) (map[uuid.UUID][]label.LabelRef, bool) {
+	taskLabels, err := queries.ListLabelsByTaskIds(c.Request.Context(), taskIds)
+	if err != nil {
+		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取任务标签失败")
+		return nil, false
+	}
+	taskLabelMap := make(map[uuid.UUID][]label.LabelRef, len(taskLabels))
+	for _, taskLabel := range taskLabels {
+		taskLabelMap[taskLabel.TaskID] = append(taskLabelMap[taskLabel.TaskID],
+			label.NewLabelRef(taskLabel.ID, taskLabel.Name, taskLabel.Color))
+	}
+	return taskLabelMap, true
+}
+
+// buildTaskDetail 重读任务并装配 TaskDetail（Create/Get/Update/PUT labels 统一入口）。
+// 包内私有：四个调用方均在本包（PUT labels 也放本包以复用本函数，见 UpdateTaskLabels 注释）
+func buildTaskDetail(c *gin.Context, queries *store.Queries, workspaceUUID, taskUUID uuid.UUID) (TaskDetail, bool) {
 	got, err := queries.GetTask(c.Request.Context(), store.GetTaskParams{
 		ID:          taskUUID,
 		WorkspaceID: workspaceUUID,
@@ -460,12 +542,18 @@ func BuildTaskDetail(c *gin.Context, queries *store.Queries, workspaceUUID, task
 		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取任务失败")
 		return TaskDetail{}, false
 	}
-	detail := toTaskDetail(got)
+	//获取task labels（sqlc :many 零行时返 nil，由 toTaskDetail 内部的 ToLabelRefs 兜底为 []）
+	labels, err := queries.ListTaskLabels(c.Request.Context(), taskUUID)
+	if err != nil {
+		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取任务标签失败")
+		return TaskDetail{}, false
+	}
+	detail := toTaskDetail(got, labels)
 	return detail, true
 }
 
 // UpdateTaskLabels 全量替换打标（api.md §9 PUT /tasks/:id/labels）。
-// 放在 task 包：需复用 BuildTaskDetail 装配响应；依赖方向 task → label，避免循环依赖
+// 放在 task 包：需复用 buildTaskDetail 装配响应；依赖方向 task → label，避免循环依赖
 func UpdateTaskLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 	queries := store.New(pool)
 	return func(c *gin.Context) {
@@ -511,17 +599,8 @@ func UpdateTaskLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 		if req.LabelIds.Set {
 			if req.LabelIds.Valid {
 				//合法性校验（R6）：同 workspace + scope=task；去重避免联结表主键冲突
-				ids, err := label.ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceUUID, store.LabelScopeTask, req.LabelIds.Value)
-				if err != nil {
-					if errors.Is(err, label.ErrLabelCrossWorkspace) {
-						handler.Error(c, http.StatusBadRequest, "CROSS_WORKSPACE", "labelIds 中包含不属于本工作区的标签")
-						return
-					}
-					if errors.Is(err, label.ErrLabelScopeMismatch) {
-						handler.Error(c, http.StatusBadRequest, "LABEL_SCOPE_MISMATCH", "labelIds 中包含 scope 不是 task 的标签")
-						return
-					}
-					handler.Error(c, http.StatusInternalServerError, "INTERNAL", "校验标签失败")
+				ids, ok := label.CheckLabelIDsLegal(c, q, workspaceUUID, store.LabelScopeTask, req.LabelIds.Value)
+				if !ok {
 					return
 				}
 				//删除
@@ -552,7 +631,7 @@ func UpdateTaskLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//提交后重新获取taskDetail
-		taskDetail, ok := BuildTaskDetail(c, queries, workspaceUUID, taskUUID)
+		taskDetail, ok := buildTaskDetail(c, queries, workspaceUUID, taskUUID)
 		if !ok {
 			return
 		}

@@ -23,7 +23,7 @@ func ListLabelsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//filter by query params：scope 缺席返回全部；枚举参数不可传空串（PG 枚举转换报错），分两条查询
+		//filter by query params：scope 可选，缺席返回该 workspace 全部标签
 		scope := c.Query("scope")
 		if scope != "" && !store.LabelScope(scope).Valid() {
 			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "scope 不符合规范")
@@ -35,7 +35,7 @@ func ListLabelsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			labels []store.Label
 			err    error
 		)
-		//scope 缺席时传 LabelScope("") 进 $2::label_scope	PG 枚举转换报错 → 500；已拆 ListLabelsByWorkspace / ...AndScope 两条查询
+		//scope 缺席时不能传 LabelScope("") 进 $2::label_scope（PG 枚举转换报错 → 500），故拆两条查询
 		if scope == "" {
 			labels, err = queries.ListLabelsByWorkspace(c.Request.Context(), workspaceUUID)
 		} else {
@@ -51,8 +51,8 @@ func ListLabelsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 
 		// convert to response format
 		resp := make([]LabelRow, 0, len(labels))
-		for _, label := range labels {
-			resp = append(resp, toLabelRow(label))
+		for _, lb := range labels {
+			resp = append(resp, toLabelRow(lb))
 		}
 		c.JSON(http.StatusOK, resp)
 	}
@@ -103,7 +103,6 @@ func CreateLabel(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 		c.JSON(http.StatusCreated, toLabelRow(created))
-
 	}
 }
 
@@ -119,8 +118,16 @@ func UpdateLabel(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//query
-		label, err := queries.GetLabel(c.Request.Context(), store.GetLabelParams{
+		//先解析请求体：畸形请求不该白跑一次数据库，也保证“畸形 body + 不存在 id”
+		//统一返 400 而非 404（与事务型 handler 的顺序一致，api.md §2.5 事务边界）
+		var req UpdateLabelDto
+		if err := c.ShouldBindJSON(&req); err != nil {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
+			return
+		}
+
+		//查——读-改-写的基准行（单条写，刻意不开事务，api.md §2.4）
+		lb, err := queries.GetLabel(c.Request.Context(), store.GetLabelParams{
 			ID:          labelUUID,
 			WorkspaceID: workspaceUUID,
 		})
@@ -134,18 +141,12 @@ func UpdateLabel(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//校验
-		var req UpdateLabelDto
-		if err := c.ShouldBindJSON(&req); err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
-			return
-		}
-
 		if req.Name.Set {
 			if !req.Name.Valid || strings.TrimSpace(req.Name.Value) == "" {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "name 为必填字段")
 				return
 			}
-			label.Name = req.Name.Value
+			lb.Name = req.Name.Value
 		}
 		if req.Color.Set {
 			// color 必传且必须 hex：显式 null 一律 400，不允许置空
@@ -153,15 +154,15 @@ func UpdateLabel(pool *pgxpool.Pool) gin.HandlerFunc {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "color 为必填字段且应符合 HEX 颜色规范")
 				return
 			}
-			label.Color = req.Color.Value
+			lb.Color = req.Color.Value
 		}
 
 		//更新
 		updated, err := queries.UpdateLabel(c.Request.Context(), store.UpdateLabelParams{
 			ID:          labelUUID,
 			WorkspaceID: workspaceUUID,
-			Name:        label.Name,
-			Color:       label.Color,
+			Name:        lb.Name,
+			Color:       lb.Color,
 		})
 		if err != nil {
 			var pgErr *pgconn.PgError
@@ -175,7 +176,6 @@ func UpdateLabel(pool *pgxpool.Pool) gin.HandlerFunc {
 
 		c.JSON(http.StatusOK, toLabelRow(updated))
 	}
-
 }
 
 func DeleteLabel(pool *pgxpool.Pool) gin.HandlerFunc {
@@ -209,15 +209,40 @@ var (
 	ErrLabelScopeMismatch  = errors.New("labelIds 中包含 scope 不匹配的标签")
 )
 
+// CheckLabelIDsLegal 是 ValidateAndDedupeLabelIDs 的 HTTP 适配层：校验失败时已按 §1 错误码表写好响应，
+// 返回 ok=false，调用方直接 `if !ok { return }`（同 checkLeaderLegal / checkAssigneeLegal 约定）。
+//
+// 四个打标入口（POST /tasks、POST /projects、两个 PUT labels）共用：错误码是对外契约，
+// 四处各写一遍 errors.Is → handler.Error 映射意味着改一个文案要同步四处。
+// scope 仅用于拼文案，指明不匹配的是哪一类标签（输出与原各处硬编码的 "task"/"project" 一致）。
+func CheckLabelIDsLegal(c *gin.Context, q *store.Queries, workspaceID uuid.UUID, scope store.LabelScope, ids []uuid.UUID) ([]uuid.UUID, bool) {
+	handled, err := ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceID, scope, ids)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrLabelCrossWorkspace):
+			handler.Error(c, http.StatusBadRequest, "CROSS_WORKSPACE", "labelIds 中包含不属于本工作区的标签")
+		case errors.Is(err, ErrLabelScopeMismatch):
+			handler.Error(c, http.StatusBadRequest, "LABEL_SCOPE_MISMATCH", "labelIds 中包含 scope 不是 "+string(scope)+" 的标签")
+		default:
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "校验标签失败")
+		}
+		return nil, false
+	}
+	return handled, true
+}
+
 // ValidateAndDedupeLabelIDs 校验 labelIds 全部属于本 workspace 且 scope 与目标类型匹配（R6），
 // 去重（保持原序）后返回——去重同时避免联结表联合主键冲突（23505）。
+// HTTP handler 请走 CheckLabelIDsLegal（含错误码映射）；本函数是纯校验核心，返回哨兵错误由调用方解释。
 // 区分两类非法：命中行数不足 = 有 id 不在本工作区（CROSS_WORKSPACE）；行数齐但 scope 不符 = SCOPE_MISMATCH。
+// ids 可为 nil 或空（裸切片调用方如 CreateProject 省略字段即为 nil）：len/range/make 对 nil 天然安全，
+// 统一短路返回空非 nil 切片 + nil error——nil 与空数组同义，下游按“零标签”处理，无需在此区分。
 /*
  @param ctx
  @param q
  @param workspaceID 工作区 ID
  @param scope 标签类型
- @param ids 标签 ID 列表
+ @param ids 标签 ID 列表；可为 nil/空，视为零标签
 */
 func ValidateAndDedupeLabelIDs(ctx context.Context, q *store.Queries, workspaceID uuid.UUID, scope store.LabelScope, ids []uuid.UUID) ([]uuid.UUID, error) {
 	//先去重
@@ -230,6 +255,7 @@ func ValidateAndDedupeLabelIDs(ctx context.Context, q *store.Queries, workspaceI
 		seen[id] = struct{}{}
 		deduped = append(deduped, id)
 	}
+	//空即零标签：短路返回空非 nil 切片，省去一次查库（下游 unnest 空数组插入 0 行）
 	if len(deduped) == 0 {
 		return deduped, nil
 	}
@@ -246,7 +272,7 @@ func ValidateAndDedupeLabelIDs(ctx context.Context, q *store.Queries, workspaceI
 	if len(rows) != len(deduped) {
 		return nil, ErrLabelCrossWorkspace
 	}
-	//行数一样，但scopse有不一样的
+	//行数一样，但 scope 有不一样的
 	for _, row := range rows {
 		if row.Scope != scope {
 			return nil, ErrLabelScopeMismatch

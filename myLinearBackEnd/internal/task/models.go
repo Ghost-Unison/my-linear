@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/project"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
@@ -23,6 +24,7 @@ type CreateTaskDto struct {
 	ParentId    *uuid.UUID  `json:"parentId"`
 	AssigneeId  *uuid.UUID  `json:"assigneeId"`
 	DueDate     *civil.Date `json:"dueDate"`
+	LabelIds    []uuid.UUID `json:"labelIds"`
 }
 
 // 更新任务 - 不能直接改ParentId
@@ -34,6 +36,7 @@ type UpdateTaskDto struct {
 	AssigneeId  handler.Nullable[uuid.UUID]  `json:"assigneeId"`
 	DueDate     handler.Nullable[civil.Date] `json:"dueDate"`
 	ProjectId   handler.Nullable[uuid.UUID]  `json:"projectId"`
+	//任务Label更新不放在这里，用label.BatchUpdateLabelIDs单独处理
 }
 
 // 任务信息
@@ -51,6 +54,7 @@ type TaskRow struct {
 	DueDate     *civil.Date         `json:"dueDate"`
 	CreatedAt   time.Time           `json:"createdAt"`
 	UpdatedAt   time.Time           `json:"updatedAt"`
+	Labels      []label.LabelRef    `json:"labels"`
 }
 
 // 任务详情
@@ -81,92 +85,86 @@ type TaskNode struct {
 	Project  *project.ProjectRef `json:"project"`
 	Assignee *member.MemberRef   `json:"assignee"`
 	DueDate  *civil.Date         `json:"dueDate"`
+	Labels   []label.LabelRef    `json:"labels"`
 }
 
-// ProjectRef AssigneeRef解引用空指针的判断
+// toProjectRef 可空 project 二元组转 ProjectRef 指针：projectID 为 NULL（任务不归属项目）时返回 nil。
+// 上方早退已保证 projectName 非 nil，直接解引用；assignee 侧的同形逻辑见 member.ToMemberRef
 func toProjectRef(projectID *uuid.UUID, projectName *string) *project.ProjectRef {
 	if projectID == nil || projectName == nil {
 		return nil
 	}
-	//projectname 插入时做了判断，应该不会为空，仅作兜底；上方早退已保证此处非 nil，仍判空防异常数据 panic
-	name := ""
-	if *projectName != "" {
-		name = *projectName
-	}
-	return &project.ProjectRef{ID: *projectID, Name: name}
-}
-
-func toAssigneeRef(assigneeID *uuid.UUID, assigneeName *string, assigneeAvatarColor *string) *member.MemberRef {
-	if assigneeID == nil {
-		return nil
-	}
-	//成员的name和avatarColor插入时应该不会为空，仅作兜底
-	name, aColor := "", ""
-	if assigneeName != nil {
-		name = *assigneeName
-	}
-	if assigneeAvatarColor != nil {
-		aColor = *assigneeAvatarColor
-	}
-
-	return &member.MemberRef{ID: *assigneeID, Name: name, AvatarColor: aColor}
+	return &project.ProjectRef{ID: *projectID, Name: *projectName}
 }
 
 // Go中没有联合类型，也不能直接从泛型参数访问具体字段，需要使用类型断言
-// ListTasksByProjectRow / ListTasksByWorkspaceRow to TaskRow
-func toTaskRow(tk any) TaskRow {
+// ListTasksByProjectRow / ListTasksByWorkspaceRow / GetTaskRow to TaskRow
+//
+// 分支内直接返回带字段名的字面量，不抽位置参数 builder：assigneeName/assigneeAvatarColor、
+// createdAt/updatedAt 等同类型相邻参数一旦调序，编译期无法发现（与 project.toProjectRow 同一约定）。
+//
+// labelsRef 兜底：来自 handler 的 map 分组时，无标签的任务取不到 key 得到 nil slice；
+// 来自 sqlc :many 零行时同样是 nil。nil 序列化为 JSON null，违反"空 labels 为 []"契约（api.md §4）
+func toTaskRow(tk any, labelsRef []label.LabelRef) TaskRow {
+	if labelsRef == nil {
+		labelsRef = make([]label.LabelRef, 0)
+	}
 	switch v := tk.(type) {
 	case store.ListTasksByProjectRow:
-		return buildTaskRow(v.ID, v.ProjectID, v.ProjectName, v.ParentID, v.ParentTitle, v.Title, v.Status, v.Priority,
-			v.AssigneeID, v.AssigneeName, v.AssigneeAvatarColor, v.DueDate, v.CreatedAt, v.UpdatedAt)
+		return TaskRow{
+			ID:          v.ID,
+			ParentId:    v.ParentID,
+			ParentTitle: v.ParentTitle,
+			Title:       v.Title,
+			Status:      string(v.Status),
+			Priority:    int(v.Priority),
+			Project:     toProjectRef(v.ProjectID, v.ProjectName),
+			Assignee:    member.ToMemberRef(v.AssigneeID, v.AssigneeName, v.AssigneeAvatarColor),
+			DueDate:     v.DueDate,
+			CreatedAt:   v.CreatedAt,
+			UpdatedAt:   v.UpdatedAt,
+			Labels:      labelsRef,
+		}
 	case store.ListTasksByWorkspaceRow:
-		return buildTaskRow(v.ID, v.ProjectID, v.ProjectName, v.ParentID, v.ParentTitle, v.Title, v.Status, v.Priority,
-			v.AssigneeID, v.AssigneeName, v.AssigneeAvatarColor, v.DueDate, v.CreatedAt, v.UpdatedAt)
+		return TaskRow{
+			ID:          v.ID,
+			ParentId:    v.ParentID,
+			ParentTitle: v.ParentTitle,
+			Title:       v.Title,
+			Status:      string(v.Status),
+			Priority:    int(v.Priority),
+			Project:     toProjectRef(v.ProjectID, v.ProjectName),
+			Assignee:    member.ToMemberRef(v.AssigneeID, v.AssigneeName, v.AssigneeAvatarColor),
+			DueDate:     v.DueDate,
+			CreatedAt:   v.CreatedAt,
+			UpdatedAt:   v.UpdatedAt,
+			Labels:      labelsRef,
+		}
+	case store.GetTaskRow:
+		return TaskRow{
+			ID:          v.ID,
+			ParentId:    v.ParentID,
+			ParentTitle: v.ParentTitle,
+			Title:       v.Title,
+			Status:      string(v.Status),
+			Priority:    int(v.Priority),
+			Project:     toProjectRef(v.ProjectID, v.ProjectName),
+			Assignee:    member.ToMemberRef(v.AssigneeID, v.AssigneeName, v.AssigneeAvatarColor),
+			DueDate:     v.DueDate,
+			CreatedAt:   v.CreatedAt,
+			UpdatedAt:   v.UpdatedAt,
+			Labels:      labelsRef,
+		}
 	default:
-		panic(fmt.Sprintf("task.ToTaskRow: unsupported type %T", tk))
+		panic(fmt.Sprintf("task.toTaskRow: unsupported type %T", tk))
 	}
 }
 
-// 公共字段构造，避免两个分支重复代码；可空字段做 nil 保护，防止 panic
-func buildTaskRow(id uuid.UUID, projectID *uuid.UUID, projectName *string, parentID *uuid.UUID, parentTitle *string,
-	title string, status store.TaskStatus, priority int16,
-	assigneeID *uuid.UUID, assigneeName *string, assigneeAvatarColor *string,
-	dueDate *civil.Date, createdAt, updatedAt time.Time) TaskRow {
-
-	row := TaskRow{
-		ID:          id,
-		Title:       title,
-		Status:      string(status),
-		Priority:    int(priority),
-		Project:     toProjectRef(projectID, projectName),
-		Assignee:    toAssigneeRef(assigneeID, assigneeName, assigneeAvatarColor),
-		DueDate:     dueDate,
-		ParentTitle: parentTitle,
-		CreatedAt:   createdAt,
-		UpdatedAt:   updatedAt,
-	}
-	if parentID != nil {
-		row.ParentId = parentID
-	}
-	return row
-}
-
-// GetTaskRow -> TaskDetail
-func toTaskDetail(tk store.GetTaskRow) TaskDetail {
+// toTaskDetail 详情装配：TaskRow + description + 父任务引用。
+// labels 收原始 sqlc 行、在此转 Ref（与 project.toProjectDetail 一致），nil 由 ToLabelRefs 内部的 make 兜底
+func toTaskDetail(tk store.GetTaskRow, labels []store.Label) TaskDetail {
 	return TaskDetail{
-		TaskRow: TaskRow{
-			ID:          tk.ID,
-			ParentId:    tk.ParentID,
-			ParentTitle: tk.ParentTitle,
-			Title:       tk.Title,
-			Status:      string(tk.Status),
-			Priority:    int(tk.Priority),
-			Project:     toProjectRef(tk.ProjectID, tk.ProjectName),
-			Assignee:    toAssigneeRef(tk.AssigneeID, tk.AssigneeName, tk.AssigneeAvatarColor),
-			DueDate:     tk.DueDate,
-			CreatedAt:   tk.CreatedAt,
-			UpdatedAt:   tk.UpdatedAt,
-		},
+		TaskRow:     toTaskRow(tk, label.ToLabelRefs(labels)),
 		Description: tk.Description,
 		Parent:      toParentRef(tk.ParentID, tk.ParentTitle, tk.ParentStatus, tk.ParentSubDone, tk.ParentSubTotal),
 	}
@@ -188,7 +186,10 @@ func toParentRef(parentID *uuid.UUID, parentTitle *string, parentStatus *store.T
 	return ref
 }
 
-func toTaskNode(tk store.GetTaskSubtreeRow) TaskNode {
+func toTaskNode(tk store.GetTaskSubtreeRow, labelsRef []label.LabelRef) TaskNode {
+	if labelsRef == nil {
+		labelsRef = make([]label.LabelRef, 0)
+	}
 	return TaskNode{
 		ID:       tk.ID,
 		ParentId: tk.ParentID,
@@ -197,7 +198,8 @@ func toTaskNode(tk store.GetTaskSubtreeRow) TaskNode {
 		Status:   string(tk.Status),
 		Priority: int(tk.Priority),
 		Project:  toProjectRef(tk.ProjectID, tk.ProjectName),
-		Assignee: toAssigneeRef(tk.AssigneeID, tk.AssigneeName, tk.AssigneeAvatarColor),
+		Assignee: member.ToMemberRef(tk.AssigneeID, tk.AssigneeName, tk.AssigneeAvatarColor),
 		DueDate:  tk.DueDate,
+		Labels:   labelsRef,
 	}
 }

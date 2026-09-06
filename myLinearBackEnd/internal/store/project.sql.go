@@ -359,7 +359,7 @@ func (q *Queries) ListProjectsByWorkspace(ctx context.Context, workspaceID uuid.
 }
 
 const softDeleteProject = `-- name: SoftDeleteProject :execrows
-UPDATE project SET deleted_at=NOW() WHERE id = $1 AND workspace_id = $2
+UPDATE project SET deleted_at=NOW() WHERE id = $1 AND workspace_id = $2 AND deleted_at IS NULL
 `
 
 type SoftDeleteProjectParams struct {
@@ -367,6 +367,8 @@ type SoftDeleteProjectParams struct {
 	WorkspaceID uuid.UUID `json:"workspace_id"`
 }
 
+// 必须带 deleted_at IS NULL：否则重复删除已软删项目仍影响 1 行 → 返 204，
+// 而 api.md §7 约定“目标不存在（含已软删、跨工作区）→ 404”（锚点条件同 SoftDeleteTaskSubtree）
 func (q *Queries) SoftDeleteProject(ctx context.Context, arg SoftDeleteProjectParams) (int64, error) {
 	result, err := q.db.Exec(ctx, softDeleteProject, arg.ID, arg.WorkspaceID)
 	if err != nil {

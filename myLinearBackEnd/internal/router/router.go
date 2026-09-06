@@ -36,6 +36,7 @@ func New(pool *pgxpool.Pool) *gin.Engine {
 			members.PATCH("/:memberId", member.UpdateMember(pool))
 			members.DELETE("/:memberId", member.DeleteMember(pool))
 		}
+
 		projects := workspaces.Group("/:workspaceId/projects")
 		{
 			projects.GET("", project.ListProjectsByWorkspace(pool))
@@ -43,7 +44,7 @@ func New(pool *pgxpool.Pool) *gin.Engine {
 			projects.GET("/:projectId", project.GetProject(pool))
 			projects.PATCH("/:projectId", project.UpdateProject(pool))
 			projects.DELETE("/:projectId", project.SoftDeleteProject(pool))
-			projects.GET("/:projectId/tasks", task.GetTasksByProject(pool))
+			projects.GET("/:projectId/tasks", task.ListTasksByProject(pool))
 			projects.PUT("/:projectId/labels", project.UpdateProjectLabels(pool))
 		}
 

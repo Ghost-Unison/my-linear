@@ -32,7 +32,7 @@ myLinear/
 │   └── api.md               # API 契约
 ├── myLinearBackEnd/         # Go 后端（module: mylinear）
 │   ├── cmd/server/          # 入口 main.go（加载配置 → 连接池 → 路由 → 优雅关闭）
-│   ├── internal/            # config / router / handler（Error 响应 + Nullable 三态）/ workspace / member / project / task（业务模块，规则内化于 handler）/ store（sqlc 生成）
+│   ├── internal/            # config / router / handler（Error 响应 + Nullable 三态 + 校验）/ workspace / member / project / task / label（业务模块，规则内化于 handler）/ store（sqlc 生成）
 │   ├── db/migrations/       # goose 迁移
 │   ├── db/queries/          # sqlc 查询
 │   └── sqlc.yaml

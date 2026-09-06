@@ -56,7 +56,7 @@
 
 | 层 | 职责 |
 |----|------|
-| handler（按资源分包：workspace / member / project / task） | path/body → DTO 解析与格式校验、业务规则 R1~R5、PATCH presence 合并、动态排序、事务编排、组装响应模型（TaskRow/ProjectRow 等）、按 §1 错误码表写错误响应 |
+| handler（按资源分包：workspace / member / project / task / label） | path/body → DTO 解析与格式校验、业务规则 R1~R6、PATCH presence 合并、动态排序、事务编排、组装响应模型（TaskRow/ProjectRow 等）、按 §1 错误码表写错误响应 |
 | store（sqlc） | 单条 SQL 的类型安全执行；跨表写操作由 handler 编排多条 sqlc 调用，用 `store.New(pool).WithTx(tx)` 串成事务 |
 
 > P0 未拆独立 service 包（`internal/service/` 目录预留）：业务规则与编排职责内化于各资源的 handler 中。本文档后续的业务规则落点均指 handler 层。
@@ -130,11 +130,11 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 | 接口 | 写操作组合（顺序执行） | 显式事务 |
 |------|----------------------|---------|
-| POST /projects | `CreateProject` + `AddProjectMembers`（+ 传了 labelIds 时 `AddProjectLabels`） | ✔ |
+| POST /projects | `CreateProject` + `AddProjectMembers` + `AddProjectLabels`（后两者恒定调用，空数组 `unnest` 插 0 行） | ✔ |
 | PUT /projects/:id/labels | `DeleteProjectLabels` + `AddProjectLabels`（全量替换） | ✔ |
-| PATCH /projects/:id | `UpdateProject`（+ 传了 memberIds 时 `DeleteProjectMembers` + `AddProjectMembers`） | ✔ |
+| PATCH /projects/:id | `UpdateProject`（+ `memberIds` 出现即 `DeleteProjectMembers`，非 null 再 `AddProjectMembers`；显式 null = 只删不增） | ✔ |
 | DELETE /projects/:id | `SoftDeleteProject` + `DetachProjectTasks` | ✔ |
-| POST /tasks | `CreateTask`（+ 传了 labelIds 时 `AddTaskLabels`） | ✔ |
+| POST /tasks | `CreateTask` + `AddTaskLabels`（恒定调用，空数组 `unnest` 插 0 行） | ✔ |
 | PUT /tasks/:id/labels | `DeleteTaskLabels` + `AddTaskLabels`（全量替换） | ✔ |
 | PATCH /tasks/:id | `UpdateTask`（+ projectId 变更时 `SyncSubtreeProject`） | ✔ |
 | DELETE /tasks/:id | `SoftDeleteTaskSubtree` 单条递归 CTE，天然原子 | — |
@@ -144,6 +144,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 约定：
 - 成员替换 = `DeleteProjectMembers`（按 projectId 全删）+ `AddProjectMembers`（`INSERT ... SELECT $1, unnest($2::uuid[])` 批量插入），比增量 diff 更简单可靠（单项目成员量小）。
 - handler 层事务模板：`tx, _ := pool.Begin(ctx)` → `q := store.New(pool).WithTx(tx)` → 多次调用 → `tx.Commit(ctx)`（defer Rollback 兜底）。
+- **事务边界**：`ShouldBindJSON` 与纯格式校验（必填字段、枚举合法性、priority 范围）留在 `pool.Begin` **之前**——畸形请求不该占用池连接与事务，也保证“畸形 body + 不存在 id”统一返 400 而非 404；所有**需要查库的校验**（lead/member/assignee 存在性、R6 标签校验、读-改-写的基准行）进事务并改用 `q`，消除校验→写入之间的 TOCTOU；`tx.Commit` 之后再用非事务 `queries` 重读装配响应。仅单条写、无查库校验的接口（POST/PATCH `/labels`、PATCH `/members/:id`、PATCH `/workspaces/:id`）**刻意不开事务**——事务只买 TOCTOU 消除与多写原子性，不防 lost update（§2.4）。
 - 唯一约束冲突（如成员重名）由数据库兜底：捕获 PG 错误码 `23505` → 映射 `409 NAME_CONFLICT`。
 
 ### 2.6 sqlc 类型映射（可空列配置）
@@ -353,7 +354,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 }
 ```
 **201**: `ProjectDetail`。`leadId ∈ memberIds` → `400 LEAD_MEMBER_CONFLICT`；`name` 为空、`status`/`priority` 非法（priority 限 0~4）、`leadId`/`memberIds` 含非本工作区成员 → `400 VALIDATION_FAILED`；`labelIds` 含非本工作区标签 → `400 CROSS_WORKSPACE`，含 `scope=task` 标签 → `400 LABEL_SCOPE_MISMATCH`（R6，handler 先去重再校验）。
-→ sqlc: `CreateProject` + `AddProjectMembers` + `AddProjectLabels`（同一事务，见 §2.5；labelIds 校验在事务外，与 memberIds 校验同位置）
+→ sqlc: `CreateProject` + `AddProjectMembers` + `AddProjectLabels`（同一事务，见 §2.5；leadId/memberIds/labelIds 三组查库校验均在事务内，事务边界见 §2.5）
 
 ### GET /workspaces/:wid/projects/:projectId `P0`
 **响应** `200`: `ProjectDetail`（含 members 列表）。
@@ -369,7 +370,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 
 ### GET /workspaces/:wid/projects/:projectId/tasks `P0`
 项目详情页的任务列表。**响应** `200`: `TaskRow[]`（平铺含子任务，按 status、createdAt 排序）。
-→ sqlc: `ListTasksByProject`（`deleted_at IS NULL`；`LEFT JOIN member` 取 assignee；固定排序同 §2.2 任务列表）
+→ sqlc: `ListTasksByProject`（`deleted_at IS NULL`；`LEFT JOIN member` 取 assignee；固定排序同 §2.2 任务列表）；P1 增 `ListLabelsByTaskIds` 批量组装 labels（handler 内存分组避免 N+1，空为 []）
 
 ## 8. Task 接口（嵌套于 workspace）
 
@@ -389,24 +390,27 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
   "projectId": "uuid | null",   // 可选：任务可不归属项目
   "parentId": "uuid | null",    // 可选：创建子任务
   "assigneeId": "uuid | null",
-  "dueDate": "可选"
+  "dueDate": "可选",
+  "labelIds": ["uuid"]          // 可选（P1），可空数组；scope 必须为 task（R6）
 }
 ```
 规则：
 - 传 `parentId` → 子任务，`projectId` 忽略并继承父任务（R4），workspace 取父任务的（R1）
 - 传 `projectId` → 校验项目属于该 workspace（否则 `400 CROSS_WORKSPACE`）
 - 传 `assigneeId` → 校验为本工作区成员（R3，否则 `400 INVALID_ASSIGNEE`）
+- 传 `labelIds` → 含非本工作区标签 `400 CROSS_WORKSPACE`，含 `scope=project` 标签 `400 LABEL_SCOPE_MISMATCH`（R6，handler 先去重再校验）
 
 **201**: `TaskDetail`。
-→ sqlc: `CreateTask`（workspace_id 由 handler 层解析写入：传 parentId → 继承父任务；传 projectId → 取项目所在 workspace；否则取路径 wid）
+→ sqlc: `CreateTask` + `AddTaskLabels`（同一事务，见 §2.5；workspace_id 由 handler 层解析写入：传 parentId → 继承父任务；传 projectId → 取项目所在 workspace；否则取路径 wid）
 
 ### GET /workspaces/:wid/tasks/:taskId `P0`
 **响应** `200`: `TaskDetail`（含 `parent: {id, title, status, doneCount, totalCount} | null`：父任务引用及其**后代**完成统计，供子任务详情页 "Sub-issue of" 行渲染；无父为 null）。
-→ sqlc: `GetTask`（`id + workspace_id + deleted_at IS NULL` 三条件，未命中即 404；`LEFT JOIN task pt` 取父 status/title + 顶层递归 CTE 聚合父任务后代统计，口径同 §4 徽标）；labels 经 `ListLabelsByTaskIds` 组装（P1）
+→ sqlc: `GetTask`（`id + workspace_id + deleted_at IS NULL` 三条件，未命中即 404；`LEFT JOIN task pt` 取父 status/title + 顶层递归 CTE 聚合父任务后代统计，口径同 §4 徽标）+ `ListTaskLabels`（P1 组装 labels，单任务直查，`ORDER BY l.created_at`）
 
 ### GET /workspaces/:wid/tasks/:taskId/subtree `P0`
 子任务区数据源。**响应** `200`: `TaskNode[]`（递归 CTE 取全部后代，按 depth、createdAt 排序；前端组装两层树并计算 x/y 徽标）。
-→ sqlc: `GetTaskSubtree`：单条 `WITH RECURSIVE`（锚点 = 自身 depth 0，输出 `depth > 0` 的全部后代；`ORDER BY depth, created_at`；`LEFT JOIN project/member` 取 project/assignee 引用；全程 `deleted_at IS NULL`）；P1 增 `ListLabelsByTaskIds` 组装子任务行 labels
+→ sqlc: `IfTaskExist`（锚点存在性）+ `GetTaskSubtree`：单条 `WITH RECURSIVE`（锚点 = 自身 depth 0，输出 `depth > 0` 的全部后代；`ORDER BY depth, created_at`；`LEFT JOIN project/member` 取 project/assignee 引用；全程 `deleted_at IS NULL`）；P1 增 `ListLabelsByTaskIds` 组装子任务行 labels。
+锚点必须先单独判存在：子树查询只输出 `depth > 0`，“无子任务”与“任务不存在”同样返回空数组，不先区分就无法给 404。用 `IfTaskExist`（`EXISTS` 点查）而不用 `GetTask`——后者带 3 个 `LEFT JOIN` + 父任务统计递归 CTE，仅用于存在性判断太重。
 
 ### PATCH /workspaces/:wid/tasks/:taskId `P0`
 **请求**: `{ "title"?, "description"?, "status"?, "priority"?, "assigneeId"?, "dueDate"?, "projectId"? }`
@@ -446,14 +450,14 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 → sqlc: `DeleteLabel`
 
 ### PUT /workspaces/:wid/tasks/:taskId/labels `P1`
-**请求**: `{ "labelIds": ["uuid"] }`（**全量替换**语义：传则整体覆盖，空数组 = 清空全部标签）。
+**请求**: `{ "labelIds": ["uuid"] }`（**全量替换**语义）。三态同 PATCH（§2.4）：字段**缺席 = 不动**（仍做存在性校验并返 200 + 当前 TaskDetail）；`[]` 与**显式 `null` 均 = 清空全部标签**。
 规则（R6）：labelIds 含非本 workspace 标签 → `400 CROSS_WORKSPACE`；含 scope='project' 标签 → `400 LABEL_SCOPE_MISMATCH`；任务不存在（含已软删、跨工作区）→ `404`。
 **200**: `TaskDetail`（带新 labels，前端直接更新缓存）。
-→ sqlc: `DeleteTaskLabels` + `AddTaskLabels`（同一事务，见 §2.5）；R6 校验经 `ListLabelScopesByIds`（label 包 `ValidateAndDedupeLabelIDs`：去重 + 命中行数不足 = CROSS_WORKSPACE、scope 不符 = LABEL_SCOPE_MISMATCH）
+→ sqlc: `IfTaskExist` + `DeleteTaskLabels` + `AddTaskLabels`（同一事务，见 §2.5）；R6 校验经 `ListLabelScopesByIds`。四个打标入口（两个 POST 的 labelIds + 两个 PUT）统一走 label 包 `CheckLabelIDsLegal`：内含纯校验核心 `ValidateAndDedupeLabelIDs`（去重 + 命中行数不足 = CROSS_WORKSPACE、scope 不符 = LABEL_SCOPE_MISMATCH），并集中做 §1 错误码映射——错误码是对外契约，不得在四个 handler 里各抄一遍
 
 ### PUT /workspaces/:wid/projects/:projectId/labels `P1`
-同任务打标（scope='task' 标签 → `LABEL_SCOPE_MISMATCH`；项目不存在含已软删 → `404`）。**200**: `ProjectDetail`。
-→ sqlc: `DeleteProjectLabels` + `AddProjectLabels`（同一事务）
+同任务打标（三态同；scope='task' 标签 → `LABEL_SCOPE_MISMATCH`；项目不存在含已软删 → `404`）。**200**: `ProjectDetail`。
+→ sqlc: `IfProjectExists` + `DeleteProjectLabels` + `AddProjectLabels`（同一事务）；R6 校验同上走 `CheckLabelIDsLegal`
 
 ### 创建时 labelIds `P1`
 POST /tasks 与 POST /projects 请求体新增可选 `labelIds: []`，校验规则同上述 PUT，联结行与创建同一事务写入（见 §2.5）。**两个 PATCH 接口均不含 label 字段**：标签变更统一走上表 PUT 子资源，避免两套替换语义入口。
