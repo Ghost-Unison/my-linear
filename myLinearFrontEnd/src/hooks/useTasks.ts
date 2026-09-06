@@ -43,9 +43,10 @@ function bumpProjectTaskCount(
   )
 }
 
-// 任务域缓存：列表 / 详情 / 子树共享 tasks 前缀，任一任务变更后整域前缀失效
-const tasksKey = (workspaceId: string) => ["workspaces", workspaceId, "tasks"] as const
-const taskDetailKey = (workspaceId: string, taskId: string) =>
+// 任务域缓存：列表 / 详情 / 子树共享 tasks 前缀，任一任务变更后整域前缀失效。
+// key 唯一来源导出（同 projectsKey 约定）：useLabels 的标签改名/改色/删除跨域失效与打标外科更新复用
+export const tasksKey = (workspaceId: string) => ["workspaces", workspaceId, "tasks"] as const
+export const taskDetailKey = (workspaceId: string, taskId: string) =>
   [...tasksKey(workspaceId), taskId] as const
 const taskSubtreeKey = (workspaceId: string, taskId: string) =>
   [...taskDetailKey(workspaceId, taskId), "subtree"] as const

@@ -1,16 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { Box, User } from "lucide-react"
+import { Box, Tag, User } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { ProjectRef, TaskStatus } from "@/api/types"
 import { displayError } from "@/lib/errors"
 import { useCreateTask } from "@/hooks/useTasks"
+import { useLabels } from "@/hooks/useLabels"
 import { useMembers } from "@/hooks/useMembers"
 import { useProjects } from "@/hooks/useProjects"
 import { DatePicker } from "@/components/ui/date-picker"
 import { DIALOG_TITLE_INPUT, FormDialog } from "@/components/ui/form-dialog"
+import { labelOptions } from "@/components/ui/label-options"
 import { memberOptions } from "@/components/ui/member-options"
 import { projectOptions } from "@/components/ui/project-options"
-import { Select } from "@/components/ui/select"
+import { MultiSelect, Select } from "@/components/ui/select"
 import { usePriorityOptions } from "@/components/ui/priority-icon"
 import { useTaskStatusOptions } from "./task-status"
 
@@ -26,7 +28,8 @@ interface CreateTaskDialogProps {
 
 /**
  * 新建任务弹窗（对齐 Linear New issue）：大标题输入 + 属性 chip 行。
- * project 传入时锁定归属（chip 只读展示）；裁剪 labels（P1）与 description（详情页再补）。
+ * project 传入时锁定归属（chip 只读展示）；labels 多选 scope=task（P1.md §3，提交带 labelIds）；
+ * 裁剪 description（详情页再补）。
  */
 export function CreateTaskDialog({
   open,
@@ -39,15 +42,21 @@ export function CreateTaskDialog({
   const statusOptions = useTaskStatusOptions()
   const priorityOptions = usePriorityOptions()
   const createTask = useCreateTask(workspaceId)
-  const { data: members } = useMembers(workspaceId)
-  // 项目选项仅在未锁定归属时查询（任务列表页入口）；锁定时 chip 只读，选项永不渲染
-  const { data: projects } = useProjects(workspaceId, "name", "asc", !project)
+  // 三份选项列表一律按 open 惰性启用：弹窗在宿主页面（任务列表页 / 项目详情页）常驻挂载，
+  // 而行内 chip 用的是后端内嵌引用，弹窗关闭时这三个查询没有其它消费者，预取只会在页面
+  // 加载时白发 GET；staleTime Infinity 下首次打开后即长期缓存，只有第一次打开付一次 RTT
+  const { data: members } = useMembers(workspaceId, open)
+  // 项目选项仅在未锁定归属时需要（任务列表页入口）；锁定时 chip 只读，选项永不渲染
+  const { data: projects } = useProjects(workspaceId, "name", "asc", !project && open)
+  // 标签选项：仅 scope=task（R6 后端兜底）
+  const { data: taskLabels } = useLabels(workspaceId, "task", open)
   const [title, setTitle] = useState("")
   const [status, setStatus] = useState<TaskStatus>("todo")
   const [priority, setPriority] = useState(0)
   const [assigneeId, setAssigneeId] = useState<string | null>(null)
   const [projectId, setProjectId] = useState<string | null>(null)
   const [dueDate, setDueDate] = useState("")
+  const [labelIds, setLabelIds] = useState<string[]>([])
   // 存储原始 error（ApiError / 校验 key 字符串），渲染期经 displayError 解析，切语言即时刷新
   const [error, setError] = useState<unknown>(null)
 
@@ -60,6 +69,7 @@ export function CreateTaskDialog({
       setAssigneeId(null)
       setProjectId(null)
       setDueDate("")
+      setLabelIds([])
       setError(null)
     }
     // defaultStatus 随打开来源变化，仅在 open 翻转时消费
@@ -84,6 +94,7 @@ export function CreateTaskDialog({
         ...(project ? { projectId: project.id } : projectId ? { projectId } : {}),
         ...(assigneeId ? { assigneeId } : {}),
         ...(dueDate ? { dueDate } : {}),
+        ...(labelIds.length > 0 ? { labelIds } : {}),
       },
       {
         onSuccess: onClose,
@@ -111,7 +122,7 @@ export function CreateTaskDialog({
         className={DIALOG_TITLE_INPUT}
       />
 
-      {/* 属性 chip 行（对齐 Linear：Status / Priority / Assignee / Due date / Project） */}
+      {/* 属性 chip 行（对齐 Linear：Status / Priority / Assignee / Due date / Project / Labels） */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={status} options={statusOptions} onChange={setStatus} />
         <Select value={priority} options={priorityOptions} onChange={setPriority} />
@@ -149,6 +160,17 @@ export function CreateTaskDialog({
             }
           />
         )}
+        <MultiSelect
+          value={labelIds}
+          options={labelOptions(taskLabels)}
+          onChange={setLabelIds}
+          placeholder={
+            <span className="inline-flex items-center gap-1.5">
+              <Tag className="size-3.5" />
+              {t("common.labels")}
+            </span>
+          }
+        />
       </div>
     </FormDialog>
   )

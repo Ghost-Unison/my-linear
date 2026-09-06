@@ -1,12 +1,14 @@
 import { useEffect, useState, type FormEvent } from "react"
-import { User, Users } from "lucide-react"
+import { Tag, User, Users } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { ProjectStatus } from "@/api/types"
 import { displayError } from "@/lib/errors"
 import { useCreateProject } from "@/hooks/useProjects"
+import { useLabels } from "@/hooks/useLabels"
 import { useMembers } from "@/hooks/useMembers"
 import { DatePicker } from "@/components/ui/date-picker"
 import { DIALOG_TITLE_INPUT, FormDialog } from "@/components/ui/form-dialog"
+import { labelOptions } from "@/components/ui/label-options"
 import { memberOptions } from "@/components/ui/member-options"
 import { MultiSelect, Select } from "@/components/ui/select"
 import { usePriorityOptions } from "@/components/ui/priority-icon"
@@ -16,7 +18,8 @@ import { useProjectStatusOptions } from "@/components/project/project-status"
 
 /**
  * 新建项目弹窗（对齐 Linear New project，见 P0.md §2）：
- * 大标题输入 + 属性 chip 行 + 描述；裁剪 Dependencies / Milestones / Labels（P1）
+ * 大标题输入 + 属性 chip 行 + 描述；labels 多选 scope=project（P1.md §3，提交带 labelIds）；
+ * 裁剪 Dependencies / Milestones
  * 默认值约定：status=backlog、priority=0（No priority），均为前端必传
  */
 export function CreateProjectDialog({
@@ -32,7 +35,11 @@ export function CreateProjectDialog({
   const statusOptions = useProjectStatusOptions()
   const priorityOptions = usePriorityOptions()
   const createProject = useCreateProject(workspaceId)
-  const { data: members } = useMembers(workspaceId)
+  // 两份选项列表按 open 惰性启用（同 CreateTaskDialog）：弹窗在项目列表页常驻挂载，
+  // 而列表行的 lead 用后端内嵌引用、标签 P1 不渲染，弹窗关闭时无其它消费者
+  const { data: members } = useMembers(workspaceId, open)
+  // 标签选项：仅 scope=project（R6 后端兜底）
+  const { data: projectLabels } = useLabels(workspaceId, "project", open)
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [status, setStatus] = useState<ProjectStatus>("backlog")
@@ -41,6 +48,7 @@ export function CreateProjectDialog({
   const [memberIds, setMemberIds] = useState<string[]>([])
   const [startDate, setStartDate] = useState("")
   const [targetDate, setTargetDate] = useState("")
+  const [labelIds, setLabelIds] = useState<string[]>([])
   // 存储原始 error（ApiError / 校验 key 字符串），渲染期经 displayError 解析，切语言即时刷新
   const [error, setError] = useState<unknown>(null)
 
@@ -55,6 +63,7 @@ export function CreateProjectDialog({
       setMemberIds([])
       setStartDate("")
       setTargetDate("")
+      setLabelIds([])
       setError(null)
     }
   }, [open])
@@ -89,6 +98,7 @@ export function CreateProjectDialog({
         ...(memberIds.length > 0 ? { memberIds } : {}),
         ...(startDate ? { startDate } : {}),
         ...(targetDate ? { targetDate } : {}),
+        ...(labelIds.length > 0 ? { labelIds } : {}),
       },
       {
         onSuccess: onClose,
@@ -116,7 +126,7 @@ export function CreateProjectDialog({
         className={DIALOG_TITLE_INPUT}
       />
 
-      {/* 属性 chip 行（对齐 Linear：Backlog / No priority / Lead / Members / Start / Target） */}
+      {/* 属性 chip 行（对齐 Linear：Backlog / No priority / Lead / Members / Start / Target / Labels） */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={status} options={statusOptions} onChange={setStatus} />
         <Select value={priority} options={priorityOptions} onChange={setPriority} />
@@ -144,6 +154,17 @@ export function CreateProjectDialog({
         />
         <DatePicker value={startDate} onChange={setStartDate} placeholder={t("project.startDate")} />
         <DatePicker value={targetDate} onChange={setTargetDate} placeholder={t("project.targetDate")} />
+        <MultiSelect
+          value={labelIds}
+          options={labelOptions(projectLabels)}
+          onChange={setLabelIds}
+          placeholder={
+            <span className="inline-flex items-center gap-1.5">
+              <Tag className="size-3.5" />
+              {t("common.labels")}
+            </span>
+          }
+        />
       </div>
 
       <textarea

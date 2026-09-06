@@ -6,6 +6,7 @@ import type { ProjectDetail, TaskRow, TaskStatus, UpdateProjectInput } from "@/a
 import { ApiError } from "@/api/client"
 import { displayError, translateError } from "@/lib/errors"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
+import { useSetProjectLabels } from "@/hooks/useLabels"
 import { useDeleteProject, useProject, useUpdateProject } from "@/hooks/useProjects"
 import { useProjectTasks } from "@/hooks/useTasks"
 import { cn } from "@/lib/utils"
@@ -13,11 +14,13 @@ import { PageHeader, tabPill } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/dialog"
+import { FieldRow } from "@/components/ui/field-row"
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog"
 import { TaskGroupList } from "@/components/task/TaskGroupList"
 import { ProjectPropertiesPanel } from "@/components/project/ProjectPropertiesPanel"
 import {
   ProjectDatesEditor,
+  ProjectLabelsEditor,
   ProjectLeadEditor,
   ProjectMembersEditor,
   ProjectPriorityEditor,
@@ -52,6 +55,7 @@ export function ProjectDetailPage() {
   } = useProjectTasks(workspaceId, projectId)
   const updateProject = useUpdateProject(workspaceId!)
   const deleteProject = useDeleteProject(workspaceId!)
+  const setProjectLabels = useSetProjectLabels(workspaceId!)
 
   // Tab 状态放 URL（?tab=），刷新/分享后仍停留在当前 tab
   const tab = searchParams.get("tab") ?? "overview"
@@ -90,6 +94,14 @@ export function ProjectDetailPage() {
     setEditError(null)
     updateProject.mutate(
       { projectId: projectId!, input },
+      { onError: (err) => setEditError(err) },
+    )
+  }
+  // 打标走 PUT 子资源（全量替换，api.md §9），错误同路上浮到页内横幅
+  const setLabels = (labelIds: string[]) => {
+    setEditError(null)
+    setProjectLabels.mutate(
+      { projectId: projectId!, labelIds },
       { onError: (err) => setEditError(err) },
     )
   }
@@ -170,7 +182,12 @@ export function ProjectDetailPage() {
               overview 与任务详情页同宽（max-w-3xl），两页推挤前后几何一致；tasks 列表占满可用宽 */}
           {tab === "overview" ? (
             <div className="mx-auto w-full max-w-3xl">
-              <OverviewContent project={project} workspaceId={workspaceId!} onPatch={patch} />
+              <OverviewContent
+                project={project}
+                workspaceId={workspaceId!}
+                onPatch={patch}
+                onLabelsChange={setLabels}
+              />
             </div>
           ) : (
             <TasksContent
@@ -183,22 +200,24 @@ export function ProjectDetailPage() {
           )}
         </div>
 
-        {/* 右侧属性面板：常驻渲染 + 宽度过渡（w-0 ↔ w-80），内容区随 flex 逐帧收窄/推挤，
+        {/* 右侧属性面板：常驻渲染 + 宽度过渡（w-0 ↔ w-96），内容区随 flex 逐帧收窄/推挤，
             与面板开合天然同步（条件渲染会导致内容区宽度瞬跳、只有面板自己有动画，观感“不丝滑”）。
-            内层固定 w-80 防动画期间面板内容被压缩换行；invisible 在关闭动画结束后生效
+            内层固定 w-96 防动画期间面板内容被压缩换行（也保证 Dates 行两枚日期 chip 单行容下）；
+            invisible 在关闭动画结束后生效
             （visibility 过渡规则：隐藏延迟到结束、显示立即），避免关闭态仍可 tab 聚焦 */}
         <aside
           aria-hidden={!panelOpen}
           className={cn(
             "shrink-0 overflow-hidden border-border transition-[width,visibility] duration-200 ease-out",
-            panelOpen ? "w-80 border-l" : "invisible w-0",
+            panelOpen ? "w-96 border-l" : "invisible w-0",
           )}
         >
-          <div className="h-full w-80 overflow-y-auto px-4 py-4 scrollbar-gutter-stable">
+          <div className="h-full w-96 overflow-y-auto px-4 py-4 scrollbar-gutter-stable">
             <ProjectPropertiesPanel
               project={project}
               workspaceId={workspaceId!}
               onPatch={patch}
+              onLabelsChange={setLabels}
               onDelete={() => setConfirmDelete(true)}
             />
           </div>
@@ -231,26 +250,25 @@ export function ProjectDetailPage() {
   )
 }
 
-// ---- Overview tab：标题 / 属性 chip 行 / 描述（对齐 Linear project overview，裁剪 Labels P1、Resources、Milestones 等）----
+// ---- Overview tab：标题 / 属性 chip 行 / 描述（对齐 Linear project overview，裁剪 Resources、Milestones 等；Labels 行 P1 已补）----
 
 function OverviewContent({
   project,
   workspaceId,
   onPatch,
+  onLabelsChange,
 }: {
   project: ProjectDetail
   workspaceId: string
   onPatch: (input: UpdateProjectInput) => void
+  onLabelsChange: (labelIds: string[]) => void
 }) {
   const { t } = useTranslation()
   return (
     <div className="flex flex-col gap-7">
       <ProjectTitleEditor project={project} onPatch={onPatch} />
 
-      <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-        <span className="pt-1.5 text-xs font-medium text-muted-foreground">
-          {t("common.properties")}
-        </span>
+      <FieldRow label={t("common.properties")}>
         <div className="flex flex-wrap items-center gap-2">
           <ProjectStatusEditor project={project} onPatch={onPatch} />
           <ProjectPriorityEditor project={project} onPatch={onPatch} />
@@ -258,14 +276,20 @@ function OverviewContent({
           <ProjectMembersEditor project={project} workspaceId={workspaceId} onPatch={onPatch} />
           <ProjectDatesEditor project={project} onPatch={onPatch} />
         </div>
-      </div>
+      </FieldRow>
 
-      <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-        <span className="pt-1.5 text-xs font-medium text-muted-foreground">
-          {t("common.description")}
-        </span>
+      {/* Labels 独立成行（对齐 Linear）：已打标签逐个 chip + “+” 添加入口，见 ui/label-picker */}
+      <FieldRow label={t("common.labels")}>
+        <ProjectLabelsEditor
+          project={project}
+          workspaceId={workspaceId}
+          onLabelsChange={onLabelsChange}
+        />
+      </FieldRow>
+
+      <FieldRow label={t("common.description")}>
         <ProjectDescriptionEditor project={project} onPatch={onPatch} />
-      </div>
+      </FieldRow>
     </div>
   )
 }

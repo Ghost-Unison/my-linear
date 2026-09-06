@@ -4,6 +4,7 @@ import type { TaskDetail, TaskStatus, UpdateTaskInput } from "@/api/types"
 import { useMembers } from "@/hooks/useMembers"
 import { useProjects } from "@/hooks/useProjects"
 import { DatePicker } from "@/components/ui/date-picker"
+import { LabelsEditor } from "@/components/ui/label-picker"
 import { memberOptions } from "@/components/ui/member-options"
 import { projectOptions } from "@/components/ui/project-options"
 import { usePriorityOptions } from "@/components/ui/priority-icon"
@@ -103,6 +104,32 @@ export function TaskProjectEditor({ task, workspaceId, onPatch, className }: Wor
           {t("task.project")}
         </span>
       }
+    />
+  )
+}
+
+interface TaskLabelsEditorProps {
+  task: TaskDetail
+  workspaceId: string
+  /** 标签走 PUT 子资源（全量替换，api.md §9），不走 onPatch 的 PATCH 通道 */
+  onLabelsChange: (labelIds: string[]) => void
+  className?: string
+}
+
+/**
+ * Labels 行：chip 簇 + “+” 管理入口（交互实现见 ui/label-picker 的 LabelsEditor，
+ * Project / Task 详情共用，仅 scope 与实体不同：点 chip 或 “+” 开同一面板，可搜索、
+ * 复选、无匹配时就地新建选色）；每次增删即发 PUT 全量替换，回显由 useSetTaskLabels
+ * 的 setQueryData 即时驱动
+ */
+export function TaskLabelsEditor({ task, workspaceId, onLabelsChange, className }: TaskLabelsEditorProps) {
+  return (
+    <LabelsEditor
+      labels={task.labels}
+      workspaceId={workspaceId}
+      scope="task"
+      onLabelsChange={onLabelsChange}
+      className={className}
     />
   )
 }

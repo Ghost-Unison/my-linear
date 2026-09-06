@@ -5,6 +5,7 @@ import type { TaskRow, TaskStatus } from "@/api/types"
 import { formatTimestamp, formatYmd, todayLocal } from "@/lib/date"
 import { cn } from "@/lib/utils"
 import { MemberAvatar } from "@/components/ui/avatar"
+import { LabelChips } from "@/components/ui/label-options"
 import { priorityLabel, PriorityIcon } from "@/components/ui/priority-icon"
 import { taskStatusLabel, TASK_STATUS_ORDER, TaskStatusIcon } from "./task-status"
 
@@ -40,7 +41,7 @@ interface TaskGroupListProps {
  * - tree：根任务为树根递归渲染子任务；树跨状态出现在含该状态的分组，非本组状态行置灰。
  * - flat：仅匹配行平铺，父任务以 "› 父标题" 面包屑跟在标题后（不渲染树）。
  * 行内（对齐 Linear）：左 = 优先级 + 状态 + 标题（+ 子树进度 x/y，仅 tree）+ 父面包屑（仅 flat）；
- * 右 = project chip（可选）+ dueDate 胶囊 + assignee 头像 + createdAt。
+ * 右 = label chip 簇（P1）+ project chip（可选）+ dueDate 胶囊 + assignee 头像 + createdAt。
  */
 export function TaskGroupList({ tasks, view, onOpenTask, onNewTask, onOpenProject }: TaskGroupListProps) {
   // 别名 tr：避免与下方多处 tasks.map((t) => ...) / for (const t of tasks) 的 TaskRow 循环变量遮蔽
@@ -208,7 +209,9 @@ function RowMeta({ task, onOpenProject }: { task: TaskRow; onOpenProject?: (proj
 
   return (
     <span className="ml-auto flex shrink-0 items-center gap-2.5 pl-4">
-      {/* project chip：任务列表页展示（P0.md §3 行元素，右侧 label 预留位 P1），点击跳项目详情 */}
+      {/* label chip 簇（P1.md §3：色点 + name，assignee 之前）；无标签不渲染 */}
+      <LabelChips labels={task.labels} />
+      {/* project chip：任务列表页展示（P0.md §3 行元素），点击跳项目详情 */}
       {onOpenProject && task.project && (
         <button
           type="button"

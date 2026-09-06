@@ -1,8 +1,9 @@
-import { User, Users } from "lucide-react"
+import { ArrowRight, User, Users } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import type { ProjectDetail, ProjectStatus, UpdateProjectInput } from "@/api/types"
 import { useMembers } from "@/hooks/useMembers"
 import { DatePicker } from "@/components/ui/date-picker"
+import { LabelsEditor } from "@/components/ui/label-picker"
 import { memberOptions } from "@/components/ui/member-options"
 import { MultiSelect, Select } from "@/components/ui/select"
 import { usePriorityOptions } from "@/components/ui/priority-icon"
@@ -117,21 +118,52 @@ export function ProjectMembersEditor({
   )
 }
 
-/** 开始/截止两枚日期 chip：清空 = 显式 null（api.md §1 PATCH 语义） */
+/** 开始/截止两枚日期 chip，中间以 → 连接（对齐 Linear 日期区间观感）：清空 = 显式 null（api.md §1 PATCH 语义） */
 export function ProjectDatesEditor({ project, onPatch }: ProjectEditorProps) {
   const { t } = useTranslation()
   return (
-    <>
+    <span className="inline-flex flex-wrap items-center gap-1.5">
       <DatePicker
         value={project.startDate ?? ""}
         onChange={(v) => onPatch({ startDate: v || null })}
         placeholder={t("project.startDate")}
       />
+      <ArrowRight aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       <DatePicker
         value={project.targetDate ?? ""}
         onChange={(v) => onPatch({ targetDate: v || null })}
         placeholder={t("project.targetDate")}
       />
-    </>
+    </span>
+  )
+}
+
+interface ProjectLabelsEditorProps {
+  project: ProjectDetail
+  workspaceId: string
+  /** 标签走 PUT 子资源（全量替换，api.md §9），不走 onPatch 的 PATCH 通道 */
+  onLabelsChange: (labelIds: string[]) => void
+  className?: string
+}
+
+/**
+ * Labels 行：chip 簇 + “+” 管理入口（交互实现见 ui/label-picker 的 LabelsEditor，
+ * Project / Task 详情共用，仅 scope 与实体不同）；回显由 useSetProjectLabels 的
+ * setQueryData 即时驱动
+ */
+export function ProjectLabelsEditor({
+  project,
+  workspaceId,
+  onLabelsChange,
+  className,
+}: ProjectLabelsEditorProps) {
+  return (
+    <LabelsEditor
+      labels={project.labels}
+      workspaceId={workspaceId}
+      scope="project"
+      onLabelsChange={onLabelsChange}
+      className={className}
+    />
   )
 }

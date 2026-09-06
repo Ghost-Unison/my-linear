@@ -6,11 +6,12 @@ import { projectsKey } from "./useProjects"
 
 const key = (workspaceId: string) => ["workspaces", workspaceId, "members"] as const
 
-export function useMembers(workspaceId: string | undefined) {
+/** enabled 供常驻挂载的弹窗按 open 惰性启用（同 useProjects）：弹窗未开时不必预取成员选项 */
+export function useMembers(workspaceId: string | undefined, enabled = true) {
   return useQuery({
     queryKey: key(workspaceId!),
     queryFn: () => listMembers(workspaceId!),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && enabled,
     // staleTime: Infinity —— 成员列表的唯一变更入口是本模块三个 mutation（均已 invalidate 本 key，
     // 失效无视 staleTime 强制刷新），挂载时不再重复 GET /members
     staleTime: Infinity,

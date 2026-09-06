@@ -4,6 +4,7 @@ import type { TaskDetail, UpdateTaskInput } from "@/api/types"
 import {
   TaskAssigneeEditor,
   TaskDueDateEditor,
+  TaskLabelsEditor,
   TaskPriorityEditor,
   TaskProjectEditor,
   TaskStatusEditor,
@@ -13,6 +14,8 @@ interface TaskPropertiesPanelProps {
   task: TaskDetail
   workspaceId: string
   onPatch: (input: UpdateTaskInput) => void
+  /** 标签走 PUT 子资源（全量替换），独立于 onPatch 的 PATCH 通道 */
+  onLabelsChange: (labelIds: string[]) => void
   onDelete: () => void
 }
 
@@ -24,6 +27,7 @@ export function TaskPropertiesPanel({
   task,
   workspaceId,
   onPatch,
+  onLabelsChange,
   onDelete,
 }: TaskPropertiesPanelProps) {
   const { t } = useTranslation()
@@ -54,6 +58,14 @@ export function TaskPropertiesPanel({
             task={task}
             workspaceId={workspaceId}
             onPatch={onPatch}
+            className="max-w-full"
+          />
+        </Row>
+        <Row label={t("common.labels")}>
+          <TaskLabelsEditor
+            task={task}
+            workspaceId={workspaceId}
+            onLabelsChange={onLabelsChange}
             className="max-w-full"
           />
         </Row>

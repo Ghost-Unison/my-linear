@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { Plus } from "lucide-react"
@@ -11,10 +11,14 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/dialog"
 import { OverviewSection } from "@/components/workspace/OverviewSection"
 import { MembersSection } from "@/components/workspace/MembersSection"
+import {
+  LabelsSection,
+  type LabelsSectionHandle,
+} from "@/components/workspace/LabelsSection"
 
 const TAB_KEYS = ["overview", "members", "label"] as const
 
-// /w/:workspaceId/home → 对齐 Linear Team Home：面包屑页头 + Tab 切换（Label 内容 P3 补充）
+// /w/:workspaceId/home → 对齐 Linear Team Home：面包屑页头 + Tab 切换（Label 管理区见 P1.md §2）
 export function WorkspaceHomePage() {
   const { t } = useTranslation()
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -23,15 +27,16 @@ export function WorkspaceHomePage() {
   const { data: workspace, isLoading, isError, error } = useWorkspace(workspaceId)
   const deleteWorkspace = useDeleteWorkspace()
   const [confirmOpen, setConfirmOpen] = useState(false)
-  // 添加成员弹窗状态上提：Add a member 按钮与 tab 同行（Linear 页头布局），
-  // MembersSection 通过 addOpen/onAddOpenChange 受控
+  // 添加成员弹窗状态上提：按钮与 tab 同行（Linear 页头布局），MembersSection 通过 addOpen/onAddOpenChange 受控。
+  // Label 走命令式句柄：页头按钮直接调 openCreate 写弹窗 target，避免受控 addOpen 与行内编辑 target 双源状态互相覆盖
   const [memberAddOpen, setMemberAddOpen] = useState(false)
+  const labelHandle = useRef<LabelsSectionHandle | null>(null)
 
   // Tab 状态放 URL（?tab=），刷新/分享后仍停留在当前 tab
   const tab = searchParams.get("tab") ?? "overview"
   const setTab = (key: string) => {
     setSearchParams({ tab: key }, { replace: true })
-    // 弹窗随 MembersSection 卸载，离开时重置避免下次进入自动弹出
+    // 弹窗随 Section 卸载，离开时重置避免下次进入自动弹出
     if (key !== "members") setMemberAddOpen(false)
   }
 
@@ -77,6 +82,11 @@ export function WorkspaceHomePage() {
               <Plus />
               {t("workspace.addMember")}
             </Button>
+          ) : tab === "label" ? (
+            <Button variant="ghost" size="sm" onClick={() => labelHandle.current?.openCreate()}>
+              <Plus />
+              {t("label.newLabel")}
+            </Button>
           ) : undefined
         }
       />
@@ -110,9 +120,7 @@ export function WorkspaceHomePage() {
           />
         )}
         {tab === "label" && (
-          <div className="rounded-lg border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-            {t("workspace.labelComingSoon")}
-          </div>
+          <LabelsSection workspaceId={workspace.id} handle={labelHandle} />
         )}
       </div>
 

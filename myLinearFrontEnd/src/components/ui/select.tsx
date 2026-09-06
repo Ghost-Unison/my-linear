@@ -20,8 +20,10 @@ const PANEL =
 const OPTION =
   "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:bg-accent"
 
-/** 弹层向右延伸所需的最小宽度估值（成员选项含头像约 180px） */
-const PANEL_MIN_W = 180
+/**
+ * 弹层 maxWidth 上限：既写进 inline style 夹住 w-max 弹层的实际宽度，
+ * 也作为右缘溢出判断的宽度依据（弹层真实宽度恒 ≤ 该上限，判据因此永不低估）
+ */
 const PANEL_MAX_W = 260
 
 /**
@@ -29,14 +31,20 @@ const PANEL_MAX_W = 260
  * absolute 方案在右侧窄面板内会溢出 aside 触发滚动条、挤压面板内容。
  * 默认左对齐 trigger 向右延伸；右缘空间不足时锚定 trigger 右缘向左展开
  * （right 锚定无需预知弹层宽度，适配 w-max 内容自适应）。
+ * 右缘判断取 PANEL_MAX_W 上限而非内容实际宽度：上限由本 hook 的 inline maxWidth 强制，
+ * 因此任何内容宽度都不会溢出视口被裁切；代价是 trigger 距右缘 260px 内即提前右对齐
+ * （观感同 Linear 属性下拉）。
  * useLayoutEffect 保证坐标在绘制前就绪，无首帧闪动；返回 null 时弹层不渲染。
  * 注意：弹层必须 createPortal 到 body——fixed 坐标相对视口，若祖先带 transform
  * （如 Dialog 面板的 scale-100），fixed 会退化为相对该祖先定位，坐标整体偏移。
  * z-[60] 高于 Dialog 的 z-50，保证 Dialog 内弹层不被遮罩。
+ * anchorKey：同一浮层可切换锚点元素时（如标签 chip 与 “+” 共用一个面板）作为额外
+ * 重算依赖——open 保持 true 时仅靠 open 变化无法触发重算，浮层会停在旧锚点位置。
  */
-function useFixedPanelStyle(
+export function useFixedPanelStyle(
   open: boolean,
-  triggerRef: RefObject<HTMLButtonElement | null>,
+  triggerRef: RefObject<HTMLElement | null>,
+  anchorKey?: unknown,
 ): CSSProperties | null {
   const [style, setStyle] = useState<CSSProperties | null>(null)
   useLayoutEffect(() => {
@@ -46,11 +54,11 @@ function useFixedPanelStyle(
     // minWidth 取 trigger 宽度，保持原 min-w-full 语义
     const base = { top: rect.bottom + 4, minWidth: rect.width, maxWidth: PANEL_MAX_W }
     setStyle(
-      rect.left + PANEL_MIN_W > window.innerWidth - 8
+      rect.left + PANEL_MAX_W > window.innerWidth - 8
         ? { ...base, right: window.innerWidth - rect.right }
         : { ...base, left: rect.left },
     )
-  }, [open, triggerRef])
+  }, [open, triggerRef, anchorKey])
   return open ? style : null
 }
 

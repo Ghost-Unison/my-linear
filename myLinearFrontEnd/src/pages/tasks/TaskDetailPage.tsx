@@ -7,6 +7,7 @@ import { ApiError } from "@/api/client"
 import { displayError, translateError } from "@/lib/errors"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useMembers } from "@/hooks/useMembers"
+import { useSetTaskLabels } from "@/hooks/useLabels"
 import { useCreateTask, useDeleteTask, useTask, useTaskSubtree, useUpdateTask } from "@/hooks/useTasks"
 import { formatYmd, todayLocal } from "@/lib/date"
 import { cn } from "@/lib/utils"
@@ -16,6 +17,8 @@ import { Button } from "@/components/ui/button"
 import { MemberAvatar } from "@/components/ui/avatar"
 import { DatePicker } from "@/components/ui/date-picker"
 import { ConfirmDialog } from "@/components/ui/dialog"
+import { FieldRow } from "@/components/ui/field-row"
+import { LabelChips } from "@/components/ui/label-options"
 import { memberOptions } from "@/components/ui/member-options"
 import { PriorityIcon, usePriorityLabel, usePriorityOptions } from "@/components/ui/priority-icon"
 import { Select } from "@/components/ui/select"
@@ -23,6 +26,7 @@ import { TaskPropertiesPanel } from "@/components/task/TaskPropertiesPanel"
 import {
   TaskAssigneeEditor,
   TaskDueDateEditor,
+  TaskLabelsEditor,
   TaskPriorityEditor,
   TaskProjectEditor,
   TaskStatusEditor,
@@ -46,6 +50,7 @@ export function TaskDetailPage() {
   const { data: subtree } = useTaskSubtree(workspaceId, taskId)
   const updateTask = useUpdateTask(workspaceId!)
   const deleteTask = useDeleteTask(workspaceId!)
+  const setTaskLabels = useSetTaskLabels(workspaceId!)
 
   const [panelOpen, setPanelOpen] = useState(() => {
     try {
@@ -73,6 +78,14 @@ export function TaskDetailPage() {
     setEditError(null)
     updateTask.mutate(
       { taskId: taskId!, input },
+      { onError: (err) => setEditError(err) },
+    )
+  }
+  // 打标走 PUT 子资源（全量替换，api.md §9），错误同路上浮到页内横幅
+  const setLabels = (labelIds: string[]) => {
+    setEditError(null)
+    setTaskLabels.mutate(
+      { taskId: taskId!, labelIds },
       { onError: (err) => setEditError(err) },
     )
   }
@@ -156,10 +169,7 @@ export function TaskDetailPage() {
               )}
             </div>
 
-            <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-              <span className="pt-1.5 text-xs font-medium text-muted-foreground">
-                {t("common.properties")}
-              </span>
+            <FieldRow label={t("common.properties")}>
               <div className="flex flex-wrap items-center gap-2">
                 <TaskStatusEditor task={task} onPatch={patch} />
                 <TaskPriorityEditor task={task} onPatch={patch} />
@@ -167,19 +177,18 @@ export function TaskDetailPage() {
                 <TaskDueDateEditor task={task} onPatch={patch} />
                 <TaskProjectEditor task={task} workspaceId={workspaceId!} onPatch={patch} />
               </div>
-            </div>
+            </FieldRow>
 
-            <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-              <span className="pt-1.5 text-xs font-medium text-muted-foreground">
-                {t("common.description")}
-              </span>
+            {/* Labels 独立成行（对齐 Linear，与 Project 详情同构）：已打标签逐个 chip + “+” 添加入口，见 ui/label-picker */}
+            <FieldRow label={t("common.labels")}>
+              <TaskLabelsEditor task={task} workspaceId={workspaceId!} onLabelsChange={setLabels} />
+            </FieldRow>
+
+            <FieldRow label={t("common.description")}>
               <TaskDescriptionEditor task={task} onPatch={patch} />
-            </div>
+            </FieldRow>
 
-            <div className="grid grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-4">
-              <span className="pt-1.5 text-xs font-medium text-muted-foreground">
-                {t("task.subIssues")}
-              </span>
+            <FieldRow label={t("task.subIssues")}>
               <SubIssuesSection
                 task={task}
                 subtree={subtree ?? []}
@@ -187,7 +196,7 @@ export function TaskDetailPage() {
                 onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
                 onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}
               />
-            </div>
+            </FieldRow>
           </div>
         </div>
 
@@ -204,6 +213,7 @@ export function TaskDetailPage() {
               task={task}
               workspaceId={workspaceId!}
               onPatch={patch}
+              onLabelsChange={setLabels}
               onDelete={() => setConfirmDelete(true)}
             />
           </div>
@@ -642,6 +652,8 @@ function SubTaskItem({
           </span>
         )}
         <span className="ml-auto flex shrink-0 items-center gap-2.5 pl-4">
+          {/* label chip 簇（P1.md §3：子任务行与列表行同渲染，位于右信息区最前） */}
+          <LabelChips labels={node.labels} />
           {/* project 徽标（与锚点任务一致，R4）：悬浮提示 + 点击跳项目详情 */}
           {node.project && (
             <button

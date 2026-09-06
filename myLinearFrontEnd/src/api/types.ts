@@ -28,7 +28,8 @@ export interface UpdateWorkspaceInput {
 export interface CreateMemberInput {
   name: string
   email?: string
-  avatarColor?: string
+  /** 前端必传 hex（P1.md §1 颜色字段契约统一：后端收紧为必填，缺席/非 hex → 400） */
+  avatarColor: string
 }
 
 export interface UpdateMemberInput {
@@ -36,6 +37,36 @@ export interface UpdateMemberInput {
   /** 显式 null = 清空 email（api.md §1 PATCH 语义） */
   email?: string | null
   avatarColor?: string
+}
+
+// ---- Label（api.md §9，P1）----
+
+/** 标签作用域：task 标签只能挂任务，project 标签只能挂项目（R6） */
+export type LabelScope = "task" | "project"
+
+/** 嵌入用精简标签引用（任务/项目行内 labels 数组元素） */
+export interface LabelRef {
+  id: string
+  name: string
+  /** HEX 颜色，如 #EB5757 */
+  color: string
+}
+
+/** 标签管理区行 = LabelRef + scope（api.md §4） */
+export interface Label extends LabelRef {
+  scope: LabelScope
+}
+
+export interface CreateLabelInput {
+  name: string
+  color: string
+  scope: LabelScope
+}
+
+/** PATCH presence 合并（api.md §2.4）：缺席不动；name/color 均不允许置空（显式 null → 400） */
+export interface UpdateLabelInput {
+  name?: string
+  color?: string
 }
 
 // ---- Project（api.md §7）----
@@ -60,6 +91,8 @@ export interface ProjectRow {
   startDate: string | null
   targetDate: string | null
   taskCount: number
+  /** 行完备原则（api.md §2.9）：P1 列表不渲染，P2 display options 消费；created_at 升序，空为 [] */
+  labels: LabelRef[]
   createdAt: string
   updatedAt: string
 }
@@ -81,6 +114,8 @@ export interface CreateProjectInput {
   /** YYYY-MM-DD */
   startDate?: string
   targetDate?: string
+  /** P1：scope 必须为 project（R6），可空数组 */
+  labelIds?: string[]
 }
 
 export interface UpdateProjectInput {
@@ -119,6 +154,8 @@ export interface TaskRow {
   assignee: MemberRef | null
   /** 业务日期 YYYY-MM-DD（后端 civil.Date 编解码，见 api.md §2.7） */
   dueDate: string | null
+  /** 行完备原则（api.md §2.9）：列表行 chip 渲染；created_at 升序，空为 [] */
+  labels: LabelRef[]
   createdAt: string
   updatedAt: string
 }
@@ -149,6 +186,8 @@ export interface CreateTaskInput {
   assigneeId?: string
   /** YYYY-MM-DD */
   dueDate?: string
+  /** P1：scope 必须为 task（R6），可空数组 */
+  labelIds?: string[]
 }
 
 export interface UpdateTaskInput {
@@ -181,4 +220,6 @@ export interface TaskNode {
   assignee: MemberRef | null
   /** 业务日期 YYYY-MM-DD（后端 civil.Date 编解码） */
   dueDate: string | null
+  /** 子任务行与列表行同渲染（api.md §4） */
+  labels: LabelRef[]
 }

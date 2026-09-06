@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next"
 import type { ProjectDetail, UpdateProjectInput } from "@/api/types"
 import {
   ProjectDatesEditor,
+  ProjectLabelsEditor,
   ProjectLeadEditor,
   ProjectMembersEditor,
   ProjectPriorityEditor,
@@ -13,6 +14,8 @@ interface ProjectPropertiesPanelProps {
   project: ProjectDetail
   workspaceId: string
   onPatch: (input: UpdateProjectInput) => void
+  /** 标签走 PUT 子资源（全量替换），独立于 onPatch 的 PATCH 通道 */
+  onLabelsChange: (labelIds: string[]) => void
   onDelete: () => void
 }
 
@@ -24,6 +27,7 @@ export function ProjectPropertiesPanel({
   project,
   workspaceId,
   onPatch,
+  onLabelsChange,
   onDelete,
 }: ProjectPropertiesPanelProps) {
   const { t } = useTranslation()
@@ -54,11 +58,17 @@ export function ProjectPropertiesPanel({
             className="max-w-full"
           />
         </Row>
-        {/* 两枚日期 chip 纵排：面板窄列放不下横排 */}
+        {/* 日期横排 + → 连接（对齐 Linear）；面板已加宽保证单行容纳 */}
         <Row label={t("project.dates")}>
-          <div className="flex flex-col items-start gap-1.5">
-            <ProjectDatesEditor project={project} onPatch={onPatch} />
-          </div>
+          <ProjectDatesEditor project={project} onPatch={onPatch} />
+        </Row>
+        <Row label={t("common.labels")}>
+          <ProjectLabelsEditor
+            project={project}
+            workspaceId={workspaceId}
+            onLabelsChange={onLabelsChange}
+            className="max-w-full"
+          />
         </Row>
       </div>
 
