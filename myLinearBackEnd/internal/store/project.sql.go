@@ -170,6 +170,93 @@ func (q *Queries) IfProjectExists(ctx context.Context, arg IfProjectExistsParams
 	return exists, err
 }
 
+const listLabelsByProjectIds = `-- name: ListLabelsByProjectIds :many
+SELECT pl.project_id, l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
+FROM project_label pl
+JOIN label l ON pl.label_id = l.id
+WHERE pl.project_id = ANY($1::uuid[])
+ORDER BY pl.project_id, l.created_at
+`
+
+type ListLabelsByProjectIdsRow struct {
+	ProjectID   uuid.UUID  `json:"project_id"`
+	ID          uuid.UUID  `json:"id"`
+	WorkspaceID uuid.UUID  `json:"workspace_id"`
+	Scope       LabelScope `json:"scope"`
+	Name        string     `json:"name"`
+	Color       string     `json:"color"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+// 项目列表批量组装用：一次取回全部项目的标签，handler 内存分组避免 N+1
+// 每个项目组内仍须 created_at 升序（api.md §4），故 ORDER BY 带上 l.created_at
+func (q *Queries) ListLabelsByProjectIds(ctx context.Context, projectIds []uuid.UUID) ([]ListLabelsByProjectIdsRow, error) {
+	rows, err := q.db.Query(ctx, listLabelsByProjectIds, projectIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLabelsByProjectIdsRow
+	for rows.Next() {
+		var i ListLabelsByProjectIdsRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Scope,
+			&i.Name,
+			&i.Color,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listProjectLabels = `-- name: ListProjectLabels :many
+SELECT l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
+FROM project_label pl
+JOIN label l ON pl.label_id = l.id
+WHERE pl.project_id = $1
+ORDER BY l.created_at
+`
+
+// 项目详情用：labels 按 created_at 升序（api.md §4）
+func (q *Queries) ListProjectLabels(ctx context.Context, projectID uuid.UUID) ([]Label, error) {
+	rows, err := q.db.Query(ctx, listProjectLabels, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Label
+	for rows.Next() {
+		var i Label
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Scope,
+			&i.Name,
+			&i.Color,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectMembers = `-- name: ListProjectMembers :many
 SELECT m.id, m.workspace_id, m.name, m.email, m.avatar_color, m.user_id, m.created_at, m.updated_at 
 FROM project_member pm

@@ -21,6 +21,20 @@ ORDER BY CASE t.status WHEN 'backlog' THEN 1 WHEN 'todo' THEN 2 WHEN 'in_progres
 ;
 
 
+-- name: ListTaskLabels :many
+SELECT l.*
+FROM task_label tl
+JOIN label l ON tl.label_id = l.id
+WHERE tl.task_id = $1;
+
+
+-- name: ListTaskLabelsByTaskIds :many
+SELECT tl.task_id, l.*
+FROM task_label tl
+JOIN label l ON tl.label_id = l.id
+WHERE tl.task_id = ANY(sqlc.arg('task_ids')::uuid[]);
+
+
 -- name: CreateTask :one
 INSERT INTO task (id,workspace_id,project_id,parent_id,title,description,status,priority,assignee_id,due_date,created_at,updated_at)
 VALUES(

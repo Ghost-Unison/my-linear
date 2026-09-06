@@ -11,8 +11,26 @@ SELECT m.*
 FROM project_member pm
 JOIN member m ON pm.member_id = m.id
 WHERE pm.project_id = $1
-ORDER BY m.name
-;
+ORDER BY m.name;
+
+
+-- name: ListProjectLabels :many
+-- 项目详情用：labels 按 created_at 升序（api.md §4）
+SELECT l.*
+FROM project_label pl
+JOIN label l ON pl.label_id = l.id
+WHERE pl.project_id = $1
+ORDER BY l.created_at;
+
+
+-- name: ListLabelsByProjectIds :many
+-- 项目列表批量组装用：一次取回全部项目的标签，handler 内存分组避免 N+1
+-- 每个项目组内仍须 created_at 升序（api.md §4），故 ORDER BY 带上 l.created_at
+SELECT pl.project_id, l.*
+FROM project_label pl
+JOIN label l ON pl.label_id = l.id
+WHERE pl.project_id = ANY(sqlc.arg('project_ids')::uuid[])
+ORDER BY pl.project_id, l.created_at;
 
 
 -- name: CreateProject :one

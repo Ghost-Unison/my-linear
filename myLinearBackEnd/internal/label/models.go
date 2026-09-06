@@ -21,7 +21,7 @@ type UpdateLabelDto struct {
 
 // 批量更新task或project标签（全量替换语义；api.md §1 camelCase）
 type BatchUpdateLabelIDs struct {
-	LabelIDs handler.Nullable[[]uuid.UUID] `json:"labelIds"`
+	LabelIds handler.Nullable[[]uuid.UUID] `json:"labelIds"`
 }
 
 // 标签信息
@@ -36,13 +36,31 @@ type LabelRow struct {
 	Scope string `json:"scope"`
 }
 
+// NewLabelRef 由原子字段构造 LabelRef：不绑定任何 sqlc row 类型，
+// 因此新增查询（如 task 侧 ListLabelsByTaskIdsRow）无需回到本包再加转换函数
+func NewLabelRef(id uuid.UUID, name, color string) LabelRef {
+	return LabelRef{
+		ID:    id,
+		Name:  name,
+		Color: color,
+	}
+}
+
+// ToLabelRefs 批量转换单实体查询结果（ListProjectLabels / ListTaskLabels 均返回 []store.Label）。
+// 显式 make：零行时 sqlc 的 :many 方法返回 nil slice，序列化为 JSON null，
+// 违反"空 labels 为 []"契约（api.md §4）
+func ToLabelRefs(lbs []store.Label) []LabelRef {
+	refs := make([]LabelRef, 0, len(lbs))
+	for _, lb := range lbs {
+		refs = append(refs, NewLabelRef(lb.ID, lb.Name, lb.Color))
+	}
+	return refs
+}
+
+// Label → LabelRow（标签管理区响应：LabelRef + scope）
 func toLabelRow(lb store.Label) LabelRow {
 	return LabelRow{
-		LabelRef: LabelRef{
-			ID:    lb.ID,
-			Name:  lb.Name,
-			Color: lb.Color,
-		},
-		Scope: string(lb.Scope),
+		LabelRef: NewLabelRef(lb.ID, lb.Name, lb.Color),
+		Scope:    string(lb.Scope),
 	}
 }

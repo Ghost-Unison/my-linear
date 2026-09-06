@@ -2,11 +2,12 @@ package task
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/project"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
-	"time"
 
 	"cloud.google.com/go/civil"
 	"github.com/google/uuid"
@@ -122,7 +123,7 @@ func toTaskRow(tk any) TaskRow {
 		return buildTaskRow(v.ID, v.ProjectID, v.ProjectName, v.ParentID, v.ParentTitle, v.Title, v.Status, v.Priority,
 			v.AssigneeID, v.AssigneeName, v.AssigneeAvatarColor, v.DueDate, v.CreatedAt, v.UpdatedAt)
 	default:
-		panic(fmt.Sprintf("task.ToResp: unsupported type %T", tk))
+		panic(fmt.Sprintf("task.ToTaskRow: unsupported type %T", tk))
 	}
 }
 

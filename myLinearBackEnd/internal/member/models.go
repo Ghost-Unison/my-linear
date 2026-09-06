@@ -31,7 +31,7 @@ type MemberRef struct {
 	AvatarColor string    `json:"avatarColor"`
 }
 
-// toResp转换
+// toResp转换 - get update返回
 func toResp(mb store.Member) MemberResp {
 	return MemberResp{
 		ID:          mb.ID,
@@ -39,6 +39,19 @@ func toResp(mb store.Member) MemberResp {
 		Email:       mb.Email, // *string 直接透传；nil 序列化为 null，禁止 *mb.Email（NULL 时 panic）
 		AvatarColor: mb.AvatarColor,
 	}
+}
+
+// 作为引用时转换 - project中
+func ToMemberRefs(mbs []store.Member) []MemberRef {
+	refs := make([]MemberRef, 0, len(mbs))
+	for _, mb := range mbs {
+		refs = append(refs, MemberRef{
+			ID:          mb.ID,
+			Name:        mb.Name,
+			AvatarColor: mb.AvatarColor,
+		})
+	}
+	return refs
 }
 
 // UpdateMemberDTO 更新成员请求体 （api.md:name, email, avatarColor 可选）

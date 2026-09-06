@@ -118,7 +118,12 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 - **更新时“不传”与“传 null”必须区分**：若不区分（如 `nil` 一律 = 不更新），则没有“清空”通道——任务移出项目、取消指派、清除截止日期都是一等功能，数据库中已有值必须能更新成 NULL。
 - 业界对照：PUT 全量替换天然支持三态，但并发下整对象互相覆盖；GraphQL 在协议层即可区分 absent 与 null（Linear 本身即如此）；REST + PATCH 只能手工做 presence 追踪，本项目 DTO 的 `Nullable[T].Set` 就是这个追踪。
-- **读-改-写的已知限制**：两个并发 PATCH 各自“读旧行 → 合并 → 全字段写回”，后提交者会把先提交者的非目标字段覆盖回去。P0 单 workspace 小团队场景接受此限制；若需严格化，在同一事务内用 `SELECT ... FOR UPDATE` 锁住旧行即可。
+- **读-改-写的已知限制（lost update）**：两个并发 PATCH 各自“读旧行 → 合并 → 全字段写回”，后提交者会把先提交者的非目标字段覆盖回去。**P1 已把 `GetXxx` 与后续写入收进同一事务，但这并不能防住 lost update**：READ COMMITTED 下普通 SELECT 不加锁，两个事务能读到同一旧版本，而 UPDATE 写入的是 Go 内存中基于旧版本的合并结果（事务化真正消除的是校验→写入之间的 TOCTOU，以及多写操作的原子性）。单 workspace 小团队场景接受此限制；若需严格化，三选一：
+  - ① 悲观锁：`SELECT ... FOR UPDATE`。**`GetTask` / `GetProject` 带 `LEFT JOIN`，必须写 `FOR UPDATE OF 别名`**，否则 PG 报 `FOR UPDATE cannot be applied to the nullable side of an outer join`；
+  - ② 乐观并发：UPDATE 追加 `AND updated_at = $读到的值`、改 `:execrows`，影响 0 行 → `409 CONFLICT` 由前端重试（需在本节登记新错误码）；
+  - ③ SERIALIZABLE 隔离级别：一方报 `40001 serialization_failure`，必须配重试循环。
+
+  注：`UpdateMember` / `UpdateWorkspace` 同为读-改-写但**刻意不开事务**——只有单条写，事务对原子性零收益、对 lost update 亦零收益。原则：事务仅在「多条写」或「校验-写需原子性」时有价值。
 - 创建时“不传”与“传null”同义，都是没有这个值，所以创建时不需要三态包装
 
 ### 2.5 事务与级联速查
@@ -331,7 +336,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 ### GET /workspaces/:wid/projects `P0`
 **参数**: `sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）。
 **响应** `200`: `ProjectRow[]`（不含已软删）。
-→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染）。**排序由 handler 层内存完成**（§2.2），SQL 不带 ORDER BY
+→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染；`ORDER BY pl.project_id, l.created_at` 保证组内升序，map 未命中的项目由 converter 兜底为 `[]`）。**排序由 handler 层内存完成**（§2.2），主查询 SQL 不带 ORDER BY
 
 ### POST /workspaces/:wid/projects `P0`
 **请求**:
@@ -343,15 +348,16 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
   "priority": 0,                // 前端必传，默认 0
   "leadId": "uuid | null",
   "memberIds": ["uuid"],        // 可空数组
+  "labelIds": ["uuid"],         // 可选（P1），可空数组；scope 必须为 project（R6）
   "startDate": "可选", "targetDate": "可选"
 }
 ```
-**201**: `ProjectDetail`。`leadId ∈ memberIds` → `400 LEAD_MEMBER_CONFLICT`；`name` 为空、`status`/`priority` 非法（priority 限 0~4）、`leadId`/`memberIds` 含非本工作区成员 → `400 VALIDATION_FAILED`。
-→ sqlc: `CreateProject` + `AddProjectMembers`（同一事务，见 §2.5）
+**201**: `ProjectDetail`。`leadId ∈ memberIds` → `400 LEAD_MEMBER_CONFLICT`；`name` 为空、`status`/`priority` 非法（priority 限 0~4）、`leadId`/`memberIds` 含非本工作区成员 → `400 VALIDATION_FAILED`；`labelIds` 含非本工作区标签 → `400 CROSS_WORKSPACE`，含 `scope=task` 标签 → `400 LABEL_SCOPE_MISMATCH`（R6，handler 先去重再校验）。
+→ sqlc: `CreateProject` + `AddProjectMembers` + `AddProjectLabels`（同一事务，见 §2.5；labelIds 校验在事务外，与 memberIds 校验同位置）
 
 ### GET /workspaces/:wid/projects/:projectId `P0`
 **响应** `200`: `ProjectDetail`（含 members 列表）。
-→ sqlc: `GetProject`（`deleted_at IS NULL`）+ `ListProjectMembers`（`member JOIN project_member`）+ `ListLabelsByProjectIds`（P1 组装 labels）
+→ sqlc: `GetProject`（`deleted_at IS NULL`）+ `ListProjectMembers`（`member JOIN project_member`）+ `ListProjectLabels`（P1 组装 labels，单项目直查，`ORDER BY l.created_at`）
 
 ### PATCH /workspaces/:wid/projects/:projectId `P0`
 **请求**: 创建字段全可选；`memberIds` 为**全量替换**语义（传则整体覆盖，缺席不动；传 `[]` 或显式 `null` 均为清空全部成员）。字段合法性校验同 POST。→ **200**: `ProjectDetail`。

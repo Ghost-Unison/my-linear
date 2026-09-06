@@ -258,8 +258,23 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		var req UpdateTaskDto
+		if err := c.ShouldBindJSON(&req); err != nil {
+			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
+			return
+		}
+
+		//beginTx
+		tx, err := pool.Begin(c.Request.Context())
+		if err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务开始失败")
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) // Commit 后调用是 no-op，兜底
+		q := store.New(pool).WithTx(tx)
+
 		//查询
-		got, err := queries.GetTask(c.Request.Context(), store.GetTaskParams{
+		got, err := q.GetTask(c.Request.Context(), store.GetTaskParams{
 			ID:          taskUUID,
 			WorkspaceID: workspaceUUID,
 		})
@@ -273,11 +288,6 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		//校验
-		var req UpdateTaskDto
-		if err := c.ShouldBindJSON(&req); err != nil {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "请求体不是合法的 JSON")
-			return
-		}
 		if req.Title.Set {
 			if !req.Title.Valid || strings.TrimSpace(req.Title.Value) == "" {
 				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "title 为必填字段")
@@ -314,7 +324,7 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 		if req.ProjectId.Set {
 			if req.ProjectId.Valid {
 				//cross workspace校验
-				_, err := queries.GetProject(c.Request.Context(), store.GetProjectParams{
+				_, err := q.GetProject(c.Request.Context(), store.GetProjectParams{
 					ID:          req.ProjectId.Value,
 					WorkspaceID: workspaceUUID,
 				})
@@ -333,7 +343,7 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 		if req.AssigneeId.Set {
 			if req.AssigneeId.Valid {
-				if !checkAssigneeLegal(c, queries, workspaceUUID, req.AssigneeId.Value) {
+				if !checkAssigneeLegal(c, q, workspaceUUID, req.AssigneeId.Value) {
 					return
 				}
 				got.AssigneeID = &req.AssigneeId.Value
@@ -341,15 +351,6 @@ func UpdateTask(pool *pgxpool.Pool) gin.HandlerFunc {
 				got.AssigneeID = nil
 			}
 		}
-
-		//beginTx
-		tx, err := pool.Begin(c.Request.Context())
-		if err != nil {
-			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务开始失败")
-			return
-		}
-		defer tx.Rollback(c.Request.Context()) // Commit 后调用是 no-op，兜底
-		q := store.New(pool).WithTx(tx)
 
 		//递归更新子任务所属项目
 		if req.ProjectId.Set {
@@ -484,8 +485,17 @@ func UpdateTaskLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		//beginTx
+		tx, err := pool.Begin(c.Request.Context())
+		if err != nil {
+			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务开始失败")
+			return
+		}
+		defer tx.Rollback(c.Request.Context()) // Commit 后调用是 no-op，兜底
+		q := store.New(pool).WithTx(tx)
+
 		//校验任务是否存在
-		taskExist, err := queries.IfTaskExist(c.Request.Context(), store.IfTaskExistParams{
+		taskExist, err := q.IfTaskExist(c.Request.Context(), store.IfTaskExistParams{
 			ID:          taskUUID,
 			WorkspaceID: workspaceUUID,
 		})
@@ -498,19 +508,10 @@ func UpdateTaskLabels(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//beginTx
-		tx, err := pool.Begin(c.Request.Context())
-		if err != nil {
-			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "数据库事务开始失败")
-			return
-		}
-		defer tx.Rollback(c.Request.Context()) // Commit 后调用是 no-op，兜底
-		q := store.New(pool).WithTx(tx)
-
-		if req.LabelIDs.Set {
-			if req.LabelIDs.Valid {
+		if req.LabelIds.Set {
+			if req.LabelIds.Valid {
 				//合法性校验（R6）：同 workspace + scope=task；去重避免联结表主键冲突
-				ids, err := label.ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceUUID, store.LabelScopeTask, req.LabelIDs.Value)
+				ids, err := label.ValidateAndDedupeLabelIDs(c.Request.Context(), q, workspaceUUID, store.LabelScopeTask, req.LabelIds.Value)
 				if err != nil {
 					if errors.Is(err, label.ErrLabelCrossWorkspace) {
 						handler.Error(c, http.StatusBadRequest, "CROSS_WORKSPACE", "labelIds 中包含不属于本工作区的标签")

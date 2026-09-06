@@ -1,0 +1,17 @@
+# 后端源码行尾符统一为 LF。
+#
+# 原因：gofmt 以 LF 为准，CRLF 文件会被 `gofmt -l` 长期标记为“未格式化”，
+# 且 `gofmt -d` 输出整文件 diff，把真正的格式问题彻底淹没；一旦有人跑 `gofmt -w`
+# 就会产生整文件重写的噪音 diff。sqlc generate 重写 internal/store/*.sql.go 同理。
+# Windows 编辑器默认写 CRLF，故在此钉死，避免每次新建文件后手工转换。
+*.go   text eol=lf
+*.sql  text eol=lf
+*.mod  text eol=lf
+*.sum  text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.sh   text eol=lf
+
+# 前端（ts/tsx/css/json）与文档（md）刻意不列入：其现有行尾状态未审计，
+# 加进来会触发 git 对已提交文件的批量重规范化，产生与本约束无关的大面积 diff。
+# 如后续需要统一，应先单独审计并配合一次专门的 renormalize 提交。

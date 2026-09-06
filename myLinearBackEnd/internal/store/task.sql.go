@@ -247,6 +247,88 @@ func (q *Queries) IfTaskExist(ctx context.Context, arg IfTaskExistParams) (bool,
 	return exists, err
 }
 
+const listTaskLabels = `-- name: ListTaskLabels :many
+SELECT l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
+FROM task_label tl
+JOIN label l ON tl.label_id = l.id
+WHERE tl.task_id = $1
+`
+
+func (q *Queries) ListTaskLabels(ctx context.Context, taskID uuid.UUID) ([]Label, error) {
+	rows, err := q.db.Query(ctx, listTaskLabels, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Label
+	for rows.Next() {
+		var i Label
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Scope,
+			&i.Name,
+			&i.Color,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTaskLabelsByTaskIds = `-- name: ListTaskLabelsByTaskIds :many
+SELECT tl.task_id, l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
+FROM task_label tl
+JOIN label l ON tl.label_id = l.id
+WHERE tl.task_id = ANY($1::uuid[])
+`
+
+type ListTaskLabelsByTaskIdsRow struct {
+	TaskID      uuid.UUID  `json:"task_id"`
+	ID          uuid.UUID  `json:"id"`
+	WorkspaceID uuid.UUID  `json:"workspace_id"`
+	Scope       LabelScope `json:"scope"`
+	Name        string     `json:"name"`
+	Color       string     `json:"color"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+func (q *Queries) ListTaskLabelsByTaskIds(ctx context.Context, taskIds []uuid.UUID) ([]ListTaskLabelsByTaskIdsRow, error) {
+	rows, err := q.db.Query(ctx, listTaskLabelsByTaskIds, taskIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTaskLabelsByTaskIdsRow
+	for rows.Next() {
+		var i ListTaskLabelsByTaskIdsRow
+		if err := rows.Scan(
+			&i.TaskID,
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Scope,
+			&i.Name,
+			&i.Color,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTasksByProject = `-- name: ListTasksByProject :many
 SELECT t.id, t.workspace_id, t.project_id, t.parent_id, t.title, t.description, t.status, t.priority, t.assignee_id, t.due_date, t.created_by, t.created_at, t.updated_at, t.deleted_at, p.name AS project_name, m.name AS assignee_name, m.avatar_color AS assignee_avatar_color, pt.title AS parent_title
 FROM task t 
