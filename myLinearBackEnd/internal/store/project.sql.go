@@ -257,6 +257,35 @@ func (q *Queries) ListProjectLabels(ctx context.Context, projectID uuid.UUID) ([
 	return items, nil
 }
 
+const listProjectMemberIdsByProjectIds = `-- name: ListProjectMemberIdsByProjectIds :many
+SELECT pm.project_id, pm.member_id
+FROM project_member pm
+WHERE pm.project_id = ANY($1::uuid[])
+ORDER BY pm.project_id
+`
+
+// P2 member 过滤求值用（P2.md §2.5）：批量取 project→member id 映射，
+// 与 ListLabelsByProjectIds 同构避免 N+1；仅 member 条件存在时调用
+func (q *Queries) ListProjectMemberIdsByProjectIds(ctx context.Context, projectIds []uuid.UUID) ([]ProjectMember, error) {
+	rows, err := q.db.Query(ctx, listProjectMemberIdsByProjectIds, projectIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ProjectMember
+	for rows.Next() {
+		var i ProjectMember
+		if err := rows.Scan(&i.ProjectID, &i.MemberID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectMembers = `-- name: ListProjectMembers :many
 SELECT m.id, m.workspace_id, m.name, m.email, m.avatar_color, m.user_id, m.created_at, m.updated_at 
 FROM project_member pm

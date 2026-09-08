@@ -4,7 +4,9 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/filter"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
@@ -27,6 +29,10 @@ func ListTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		if !ok {
 			return
 		}
+
+		// P2 条件列表过滤：与任务列表页同 f= 契约（P2.md §2.5）；
+		// Issues tab 面 project 字段隐含，前端 Filter 菜单不提供（P2.md §2.2）
+		conds := filter.Parse(c.QueryArray("f"), taskFilterSpecs)
 
 		//query
 		tasks, err := queries.ListTasksByProject(c.Request.Context(), store.ListTasksByProjectParams{
@@ -52,6 +58,8 @@ func ListTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		for _, task := range tasks {
 			taskRows = append(taskRows, toTaskRow(task, taskLabelMap[task.ID]))
 		}
+		// 条件列表求值（条件间 AND）；提取器与任务列表页共用 taskVal
+		taskRows = filter.Apply(taskRows, conds, taskVal, time.Now())
 		c.JSON(http.StatusOK, taskRows)
 	}
 }
@@ -65,32 +73,32 @@ func ListTasksByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		//filter by query params
-		filter := c.DefaultQuery("filter", "all") //all | active = todo+inprogress | backlog
-		if filter != "all" && filter != "active" && filter != "backlog" {
-			handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "filter 参数错误")
-			return
-		}
-		// 必须保持非 nil 空切片：nil 会被 pgx 编码为 SQL NULL，
-		// cardinality(NULL)=NULL 使整个谓词为 NULL，查询静默返回空集. 使用sqlc生成的枚举需要提前注册
-		statusEnums := make([]store.TaskStatus, 0)
-		if filter == "active" {
-			statusEnums = append(statusEnums, store.TaskStatusTodo, store.TaskStatusInProgress)
-		} else if filter == "backlog" {
-			statusEnums = append(statusEnums, store.TaskStatusBacklog)
+		// P2 条件列表过滤：f= 参数 → 引擎条件列表（P2.md §2.5，Go 层求值）；
+		// 遗留别名 filter= 仅当无 f= 时生效（前端 tab 迁移 f= 后退役）
+		// /tasks?f=status.anyOf.todo,done&f=labels.incl.l1
+		conds := filter.Parse(c.QueryArray("f"), taskFilterSpecs)
+		if len(conds) == 0 {
+			legacy, ok := legacyStatusConds(c.DefaultQuery("filter", "all"))
+			if !ok {
+				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "filter 参数错误")
+				return
+			}
+			conds = legacy
 		}
 
 		//query
+		// P2：过滤求值移至 Go 层引擎，SQL statuses 数组参数退役恒传非 nil 空切片
+		//（nil 会被 pgx 编码为 SQL NULL，cardinality(NULL)=NULL 使谓词静默返回空集）
 		tasks, err := queries.ListTasksByWorkspace(c.Request.Context(), store.ListTasksByWorkspaceParams{
 			WorkspaceID: workspaceUUID,
-			Statuses:    statusEnums,
+			Statuses:    make([]store.TaskStatus, 0),
 		})
 		if err != nil {
 			handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取任务列表失败")
 			return
 		}
 
-		//没有自定义字段排序，在sql中默认按status和createTime升序固定排序
+		//基底序（status 枚举序 + created_at）由 SQL 固定 ORDER BY 保证，过滤不重排
 
 		// 批量取标签并按 taskId 分组
 		taskIds := make([]uuid.UUID, 0, len(tasks))
@@ -107,6 +115,8 @@ func ListTasksByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		for _, task := range tasks {
 			taskRows = append(taskRows, toTaskRow(task, taskLabelMap[task.ID]))
 		}
+		// 条件列表求值（条件间 AND）；labels 联结数据已在行上，提取器直读
+		taskRows = filter.Apply(taskRows, conds, taskVal, time.Now())
 		c.JSON(http.StatusOK, taskRows)
 	}
 }

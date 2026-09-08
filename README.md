@@ -72,18 +72,37 @@ npm run dev
 > 定位：参考 Linear 的页面布局与信息架构，但**功能上做最大简化**。
 > 视觉美感与交互动效后续迭代优化，先保证功能闭环、信息层级正确。
 
-模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）为当前阶段快照：标签管理区 + 任务/项目打标与展示；内置固定视图取消，与 saved_view 自定义视图、列表页 filter / display options 按钮一并归入 P2。
+模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消，与 saved_view 自定义视图、列表页 filter / display options 按钮一并归入 P2，**P2 为当前阶段**。
 
 ## 功能边界（裁剪项与后置项）
 
 裁剪（不做）：登录鉴权（P4 开源化再做）、评论、Activity 动态、附件、通知/Inbox、Cycle/Sprint、Milestone、项目 Progress 图表、Health 状态、任务编号（GHO-13）、工时估算、暗/亮主题切换（先只做暗色）。
 
-后置：自定义视图（saved_view）与列表页 filter / display options 面板（P2）、看板拖拽排序（P3）、列表行内编辑（P3）、标签就地创建（P3）。
+后置：自定义视图（saved_view）与列表页 filter / display options 面板（P2）、看板拖拽排序（P3）、列表行内编辑（P3）。（原列 P3 的「标签就地创建」已随 P1 提前实现）
 
 ## 开发路线图
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
-- **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）
-- **P2**：saved_view 自定义视图、列表页 filter 按钮与 display options 按钮（分组/排序/展示属性；展示属性为纯前端渲染开关，接口返回完备行）、项目详情页完善
-- **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、标签就地创建（Linear 式 "Change or add labels" 弹层）、交互细节打磨
+- **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）——**已完成**，并提前做完原属 P3 的标签就地创建
+- **P2**（当前阶段）：saved_view 自定义视图、列表页 filter 按钮与 display options 按钮（分组/排序/展示属性；展示属性为纯前端渲染开关，接口返回完备行）、项目详情页完善
+- **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、交互细节打磨
 - **P4**：开源化（注册登录、多租户、云上部署）
+
+---
+
+## 已知遗留（留待最终优化阶段处理）
+
+已确认、但当前阶段刻意不修的问题，集中记在这里免得后续重复排查。
+
+### 1. 窄视口 + 右侧属性抽屉同开时，详情字段行可能横向溢出
+
+- **现象**：视口约 844px 且详情页右侧属性抽屉展开时，overview 主区内容列被压到约 216px；字段行组件 `ui/field-row.tsx`（左列 7.5rem 字段名 + 右列 `minmax(0,1fr)`）的右列只剩约 80px，而单枚标签 chip 约 115px，出现横向溢出（`scrollWidth > clientWidth`）。
+- **影响面**：项目详情（抽屉 w-96）与任务详情（抽屉 w-80）**主区**的字段行。抽屉内部的 Labels 行不受影响（实测值列 202–266px，chip 正常换行）；弹层定位也不受影响（右缘判据用 `PANEL_MAX_W = 260`，窄视口下走右对齐分支，实测与触发器右缘误差 0.01px）。
+- **为什么现在不改**：`minmax(0,1fr)` 允许列收缩到小于单个 chip 宽度，是既有栅格语义而非某次重构引入；正常使用不会在 844px 窄窗下同时展开抽屉。
+- **可选修法**（择一，均属响应式行为变更，动手前需单独确认）：① 按断点隐藏抽屉（如 `hidden xl:flex`，窄屏只保留主区）；② 窄屏收窄字段名左列给右列让位；③ 字段行右列加 `overflow-x-auto`，把溢出降级为局部滚动而不撑破布局。
+
+### 2. 弹层打开期间父容器滚动，弹层位置不跟随
+
+- **现象**：Select / MultiSelect / DatePicker / 标签面板都是打开瞬间用 `useLayoutEffect` 快照触发元素的视口坐标（`position: fixed` + portal 到 body），未监听 scroll / resize，因此弹层开着时滚动页面或抽屉，弹层会停在原位与触发元素脱节。
+- **为什么现在不改**：弹层内任意点击（含滚动条拖动之外的区域）与 Escape / 外部点击都会立即关闭，实际很难在开着的状态下滚动容器；跟随需要引入 scroll/resize 监听与重算，P0/P1 阶段判定为不划算。
+- **可选修法**：给打开态挂 `scroll`（capture，覆盖祖先滚动容器）与 `resize` 监听重算坐标，或直接改用 Radix Popover / Floating UI 的自动跟随与碰撞检测。

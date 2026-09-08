@@ -63,7 +63,9 @@
 
 ### 2.2 筛选与排序
 
-- **筛选下沉 SQL**，用数组参数表达可选枚举集合（空数组 = 不过滤）：
+- **P2 修订：条件列表过滤由 Go 层引擎求值**（`internal/filter`，P2.md §2.5）。wire 契约为重复查询参数 `f=<field>.<op>.<v1,v2>`（同字段可重复出现，条件间 AND）；操作符按字段值形态分四组：单值 `is/anyOf/not`、多值集合 `incl/notIncl`、时刻与日历日 `before/after`（相对阶梯码 `1d/3d/1w/1mo/3mo/6mo/1y`，cutoff 由 Go 层按 now 计算）。空伪值哨兵 `none` 代表 NULL / 空集合。不下沉 SQL 的理由：条件条数动态，sqlc 固定形状查询无法承载；重复 `incl` 的 AND 不可折叠为单个数组参数；不分页前提下全量行集本就取回内存，与本节"动态排序放 handler 层"同构。Parse 对非法条目（字段/操作符/值三级白名单不命中）**静默丢弃**不整体报错——URL 可分享可书签，须对手改/过期参数健壮。
+- 下述 P0 的 statuses 数组下沉方案随之退役：`ListTasksByWorkspace` 的 statuses 参数恒传非 nil 空切片（SQL 谓词保留但永不过滤），status 过滤统一走 `f=status.*` 条件。
+- （P0 原案，已被上条取代）**筛选下沉 SQL**，用数组参数表达可选枚举集合（空数组 = 不过滤）：
 
   ```sql
   AND (cardinality(sqlc.arg('statuses')::task_status[]) = 0
@@ -335,9 +337,9 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 ## 7. Project 接口（嵌套于 workspace）
 
 ### GET /workspaces/:wid/projects `P0`
-**参数**: `sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）。
+**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/lead/member/labels/startDate/targetDate/createdAt/updatedAt`，`lead/member/labels` 支持 `none`）。`sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）——P2 display options 切片将排序前端化后退役。
 **响应** `200`: `ProjectRow[]`（不含已软删）。
-→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染；`ORDER BY pl.project_id, l.created_at` 保证组内升序，map 未命中的项目由 converter 兜底为 `[]`）。**排序由 handler 层内存完成**（§2.2），主查询 SQL 不带 ORDER BY
+→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染；`ORDER BY pl.project_id, l.created_at` 保证组内升序，map 未命中的项目由 converter 兜底为 `[]`）；P2 增 `ListProjectMemberIdsByProjectIds`（仅当存在 `f=member.*` 条件时批量取 project→member id 映射供过滤引擎使用，ProjectRow 不带 members）。**排序由 handler 层内存完成**（§2.2），主查询 SQL 不带 ORDER BY
 
 ### POST /workspaces/:wid/projects `P0`
 **请求**:
@@ -369,13 +371,14 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 → sqlc: `SoftDeleteProject`（`:execrows`，影响行数为 0 即 404；`DetachProjectTasks` 不受此约束，无关联任务影响 0 行属正常）+ `DetachProjectTasks`（同一事务；外键 SET NULL 仅对硬删生效，软删必须显式脱离，见 §2.3）
 
 ### GET /workspaces/:wid/projects/:projectId/tasks `P0`
-项目详情页的任务列表。**响应** `200`: `TaskRow[]`（平铺含子任务，按 status、createdAt 排序）。
+项目详情页任务列表（Issues tab）。**参数**: `f=<field>.<op>.<values>` 条件列表（与 §8 `GET /tasks` 同契约同字段白名单，§2.2 P2 修订；project 字段在本面隐含，前端 Filter 菜单不提供，P2.md §2.2）。
+**响应** `200`: `TaskRow[]`（平铺含子任务，按 status、createdAt 排序）。
 → sqlc: `ListTasksByProject`（`deleted_at IS NULL`；`LEFT JOIN member` 取 assignee；固定排序同 §2.2 任务列表）；P1 增 `ListLabelsByTaskIds` 批量组装 labels（handler 内存分组避免 N+1，空为 []）
 
 ## 8. Task 接口（嵌套于 workspace）
 
 ### GET /workspaces/:wid/tasks `P0`
-任务列表页主查询。**参数**: `filter=all|active|backlog`（默认 `all`；active = todo + in_progress）。
+任务列表页主查询。**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/assignee/project/labels/dueDate/createdAt/updatedAt`，`assignee/project/labels` 支持 `none`）。遗留参数 `filter=all|active|backlog` 降级为 status 条件别名（active = `status.anyOf.todo,in_progress`，backlog = `status.anyOf.backlog`），**仅当无任何合法 f= 条件时生效**，前端 tab 迁移 f= 后退役；非法值仍 `400 VALIDATION_FAILED`。
 **响应** `200`: `TaskRow[]`（平铺含子任务，按 status 枚举序、createdAt 排序）。
 → sqlc: `ListTasksByWorkspace`：`deleted_at IS NULL` + statuses 数组可选筛选（§2.2）+ 固定排序 + `LEFT JOIN project/member` 组装 ProjectRef/assignee；走 `(workspace_id, parent_id)` 部分索引；P1 增 `ListLabelsByTaskIds` 批量取标签 handler 组装（空为 []）
 

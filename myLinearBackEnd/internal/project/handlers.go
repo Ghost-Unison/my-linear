@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/filter"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
@@ -33,6 +35,10 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
+		// P2 条件列表过滤（P2.md §2.5，Go 层求值）；sort/order 参数保留至display options 切片前端化 ordering 时退役
+		//把 URL 字符串翻译成条件对象
+		conds := filter.Parse(c.QueryArray("f"), projectFilterSpecs)
+
 		// sort
 		sortField := c.DefaultQuery("sort", "createdAt")
 		orderField := c.DefaultQuery("order", "desc")
@@ -52,6 +58,18 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		projectRows := make([]ProjectRow, 0, len(projects))
 		for _, item := range projects {
 			projectRows = append(projectRows, toProjectRow(item, projectLabelMap[item.ID]))
+		}
+
+		// member 条件依赖批量取回的成员集合（ProjectRow 不带 members，仅条件存在时取）
+		// 逐行过安检，所有条件都点头才放行
+		if needsMemberSets(conds) {
+			memberSets, ok := buildProjectMemberSets(c, queries, projectIds)
+			if !ok {
+				return
+			}
+			projectRows = filter.Apply(projectRows, conds, projectValGetter(memberSets), time.Now())
+		} else {
+			projectRows = filter.Apply(projectRows, conds, projectValGetter(nil), time.Now())
 		}
 		c.JSON(http.StatusOK, projectRows)
 	}

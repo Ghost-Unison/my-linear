@@ -32,6 +32,14 @@ JOIN label l ON pl.label_id = l.id
 WHERE pl.project_id = ANY(sqlc.arg('project_ids')::uuid[])
 ORDER BY pl.project_id, l.created_at;
 
+-- name: ListProjectMemberIdsByProjectIds :many
+-- P2 member 过滤求值用（P2.md §2.5）：批量取 project→member id 映射，
+-- 与 ListLabelsByProjectIds 同构避免 N+1；仅 member 条件存在时调用
+SELECT pm.project_id, pm.member_id
+FROM project_member pm
+WHERE pm.project_id = ANY(sqlc.arg('project_ids')::uuid[])
+ORDER BY pm.project_id;
+
 
 -- name: CreateProject :one
 INSERT INTO project (id,workspace_id,name,description,status,priority,lead_id,start_date,target_date,created_at,updated_at)
