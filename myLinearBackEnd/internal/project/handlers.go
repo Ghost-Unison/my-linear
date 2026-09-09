@@ -35,7 +35,8 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// P2 条件列表过滤（P2.md §2.5，Go 层求值）；sort/order 参数保留至display options 切片前端化 ordering 时退役
+		// P2 条件列表过滤（P2.md §2.5，Go 层求值）
+		// TODO(P2-B)：display options 切片前端化 ordering 后退役 sort/order 参数与 sortProjects
 		//把 URL 字符串翻译成条件对象
 		conds := filter.Parse(c.QueryArray("f"), projectFilterSpecs)
 

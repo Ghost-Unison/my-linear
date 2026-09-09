@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { ArrowDown, ArrowUp, Box, Plus } from "lucide-react"
@@ -7,11 +7,14 @@ import { useProjects } from "@/hooks/useProjects"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { colorFor } from "@/lib/color"
 import { displayError } from "@/lib/errors"
+import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import { cn } from "@/lib/utils"
 import { MemberAvatar } from "@/components/ui/avatar"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
+import { FilterButton } from "@/components/filter/filter-menu"
+import { FilterChipRow } from "@/components/filter/filter-chips"
 import { PriorityIcon, usePriorityLabel } from "@/components/ui/priority-icon"
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog"
 import {
@@ -36,19 +39,36 @@ export function ProjectListPage() {
   // 排序状态放 URL（?sort=&order=），刷新/分享后仍保持
   const sort = searchParams.get("sort") ?? "createdAt"
   const order = searchParams.get("order") ?? "desc"
-  const { data: projects, isLoading, isError, error } = useProjects(workspaceId, sort, order)
+  // P2 条件列表镜像进 URL（?f= 重复参数，方案 A）；与后端 Parse 同规则丢弃非法条目，
+  // 保证 chip 行显示与后端求值永远一致
+  const conds = useMemo(() => parseConds(searchParams, "projects_page"), [searchParams])
+  const fParams = useMemo(() => encodeConds(conds), [conds])
+  const setConds = (next: FilterCond[]) => {
+    const sp = new URLSearchParams(searchParams)
+    writeConds(sp, next)
+    setSearchParams(sp, { replace: true })
+  }
+  const { data: projects, isLoading, isError, error } = useProjects(
+    workspaceId,
+    sort,
+    order,
+    fParams,
+  )
   const { data: workspaces } = useWorkspaces()
   const [createOpen, setCreateOpen] = useState(false)
   const workspaceName =
     workspaces?.find((w) => w.id === workspaceId)?.name ?? t("common.workspaceFallback")
 
-  // 点同一列切换升降序；点新列重置为 asc
+  // 点同一列切换升降序；点新列重置为 asc（只改写 sort/order 两键，保留 f= 条件）
   const toggleSort = (field: string) => {
+    const sp = new URLSearchParams(searchParams)
     if (sort === field) {
-      setSearchParams({ sort: field, order: order === "asc" ? "desc" : "asc" }, { replace: true })
+      sp.set("order", order === "asc" ? "desc" : "asc")
     } else {
-      setSearchParams({ sort: field, order: "asc" }, { replace: true })
+      sp.set("sort", field)
+      sp.set("order", "asc")
     }
+    setSearchParams(sp, { replace: true })
   }
 
   const headerCell = (field: string | null, label: string, className?: string) => {
@@ -91,12 +111,30 @@ export function ProjectListPage() {
         }
         tabs={<span className={tabPill(true)}>{t("project.allProjects")}</span>}
         actions={
-          <Button variant="ghost" size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus />
-            {t("project.newProject")}
-          </Button>
+          <>
+            <FilterButton
+              workspaceId={workspaceId!}
+              surface="projects_page"
+              conds={conds}
+              onChange={setConds}
+            />
+            <Button variant="ghost" size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus />
+              {t("project.newProject")}
+            </Button>
+          </>
         }
       />
+
+      {/* 条件 chip 行（tab 行与表头之间）：仅存在条件时渲染 */}
+      {conds.length > 0 && (
+        <FilterChipRow
+          workspaceId={workspaceId!}
+          surface="projects_page"
+          conds={conds}
+          onChange={setConds}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto px-6 pb-6">
         {/* 窄屏允许横向滚动（min-w 撑开 grid，Name 列不被压成 0 宽） */}
@@ -122,7 +160,9 @@ export function ProjectListPage() {
               </p>
             )}
             {!isLoading && projects?.length === 0 && (
-              <p className="py-4 text-sm text-muted-foreground">{t("project.empty")}</p>
+              <p className="py-4 text-sm text-muted-foreground">
+                {conds.length > 0 ? t("filter.emptyResult") : t("project.empty")}
+              </p>
             )}
 
             {projects?.map((p) => (

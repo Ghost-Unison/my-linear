@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query"
 import {
   createProject,
   deleteProject,
@@ -20,11 +20,13 @@ export function useProjects(
   workspaceId: string | undefined,
   sort: string,
   order: string,
+  // P2 条件列表（f= 编码串数组，顺序即 chip 顺序）；进 queryKey → 过滤切换发请求
+  f: readonly string[] = [],
   enabled = true,
 ) {
   return useQuery({
-    queryKey: [...projectsKey(workspaceId!), { sort, order }],
-    queryFn: () => listProjects(workspaceId!, { sort, order }),
+    queryKey: [...projectsKey(workspaceId!), { sort, order, f: [...f] }],
+    queryFn: () => listProjects(workspaceId!, { sort, order, f: [...f] }),
     enabled: !!workspaceId && enabled,
     // staleTime: Infinity —— 列表行（自身字段 + lead 内嵌引用 + taskCount）的全部变更入口：
     // 本模块三个 mutation 与成员改名/删除（lead）invalidate 本前缀，任务增删外科 bump taskCount、
@@ -32,6 +34,21 @@ export function useProjects(
     staleTime: Infinity,
   })
 }
+
+/** 预取项目集：打开 filter 菜单时调用（筛选选项用 name&asc 变体，须与使用方完全一致）；
+ *  queryKey/queryFn/staleTime 与 useProjects 单源，命中缓存秒开 */
+export const prefetchProjects = (
+  qc: QueryClient,
+  workspaceId: string,
+  sort: string,
+  order: string,
+  f: readonly string[] = [],
+) =>
+  qc.prefetchQuery({
+    queryKey: [...projectsKey(workspaceId), { sort, order, f: [...f] }],
+    queryFn: () => listProjects(workspaceId, { sort, order, f: [...f] }),
+    staleTime: Infinity,
+  })
 
 export function useCreateProject(workspaceId: string) {
   const qc = useQueryClient()

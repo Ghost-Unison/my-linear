@@ -12,12 +12,19 @@ import (
 // taskFilterSpecs 任务列表可过滤字段白名单（P2.md §2.2）：字段 → 值形态 + 值域校验。
 // task 表无 start_date 列，Linear 的 Started date 裁剪（P2.md §2.2 注）
 var taskFilterSpecs = map[string]filter.Spec{
-	"status":    {Kind: filter.Single, Validate: func(v string) bool { return store.TaskStatus(v).Valid() }},
-	"priority":  {Kind: filter.Single, Validate: isPriority},
-	"assignee":  {Kind: filter.Single, AllowNone: true, Validate: isUUID},
-	"project":   {Kind: filter.Single, AllowNone: true, Validate: isUUID},
-	"labels":    {Kind: filter.Multi, AllowNone: true, Validate: isUUID},
-	"dueDate":   {Kind: filter.Day},
+	"status":   {Kind: filter.Single, Validate: func(v string) bool { return store.TaskStatus(v).Valid() }},
+	"priority": {Kind: filter.Single, Validate: isPriority},
+	"assignee": {Kind: filter.Single, AllowNone: true, Validate: isUUID},
+	"project":  {Kind: filter.Single, AllowNone: true, Validate: isUUID},
+	"labels":   {Kind: filter.Multi, AllowNone: true, Validate: isUUID},
+	// dueDate：fromNow 五档（1d/3d/1w/1mo/3mo，Linear 实测无 6mo/1y）+ No due date + Overdue 谓词
+	"dueDate": {
+		Kind:         filter.Day,
+		FromNow:      true,
+		Ladders:      []string{"1d", "3d", "1w", "1mo", "3mo"},
+		AllowNone:    true,
+		AllowOverdue: true,
+	},
 	"createdAt": {Kind: filter.Moment},
 	"updatedAt": {Kind: filter.Moment},
 }
@@ -64,18 +71,4 @@ func taskVal(row TaskRow, field string) filter.Val {
 		return filter.Val{T: row.UpdatedAt}
 	}
 	return filter.Val{}
-}
-
-// legacyStatusConds 遗留 filter= 参数 → 等价 status 条件（P2.md §2.5：仅当无 f= 时生效，
-// 前端 tab 迁移 f= 后退役）。ok=false = 非法值，调用方 400
-func legacyStatusConds(filterParam string) ([]filter.Cond, bool) {
-	switch filterParam {
-	case "active":
-		return []filter.Cond{{Field: "status", Op: "anyOf", Values: []string{"todo", "in_progress"}, Kind: filter.Single}}, true
-	case "backlog":
-		return []filter.Cond{{Field: "status", Op: "anyOf", Values: []string{"backlog"}, Kind: filter.Single}}, true
-	case "all":
-		return nil, true
-	}
-	return nil, false
 }

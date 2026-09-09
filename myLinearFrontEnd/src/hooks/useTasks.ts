@@ -13,7 +13,6 @@ import type {
   ProjectDetail,
   ProjectRow,
   TaskDetail,
-  TaskFilter,
   TaskNode,
   UpdateTaskInput,
 } from "@/api/types"
@@ -51,18 +50,24 @@ export const taskDetailKey = (workspaceId: string, taskId: string) =>
 const taskSubtreeKey = (workspaceId: string, taskId: string) =>
   [...taskDetailKey(workspaceId, taskId), "subtree"] as const
 
-export function useProjectTasks(workspaceId: string | undefined, projectId: string | undefined) {
+export function useProjectTasks(
+  workspaceId: string | undefined,
+  projectId: string | undefined,
+  // P2 条件列表（f= 编码串数组，同 useWorkspaceTasks 范式）：进 queryKey → 过滤切换发请求
+  f: readonly string[] = [],
+) {
   return useQuery({
-    queryKey: projectTasksKey(workspaceId!, projectId!),
-    queryFn: () => listProjectTasks(workspaceId!, projectId!),
+    queryKey: [...projectTasksKey(workspaceId!, projectId!), "list", [...f]],
+    queryFn: () => listProjectTasks(workspaceId!, projectId!, f),
     enabled: !!workspaceId && !!projectId,
   })
 }
 
-export function useWorkspaceTasks(workspaceId: string | undefined, filter: TaskFilter) {
+export function useWorkspaceTasks(workspaceId: string | undefined, f: readonly string[]) {
   return useQuery({
-    queryKey: [...tasksKey(workspaceId!), "list", filter],
-    queryFn: () => listWorkspaceTasks(workspaceId!, filter),
+    // f= 编码串数组进 queryKey（同 useProjects 范式）：tab/chip 条件切换即发请求
+    queryKey: [...tasksKey(workspaceId!), "list", [...f]],
+    queryFn: () => listWorkspaceTasks(workspaceId!, f),
     enabled: !!workspaceId,
   })
 }

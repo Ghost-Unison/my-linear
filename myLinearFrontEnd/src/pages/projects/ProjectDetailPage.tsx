@@ -1,15 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { PanelRight, Plus, X } from "lucide-react"
 import type { ProjectDetail, TaskRow, TaskStatus, UpdateProjectInput } from "@/api/types"
 import { ApiError } from "@/api/client"
 import { displayError, translateError } from "@/lib/errors"
+import { RoundIconButton } from "@/components/ui/round-icon-button"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useSetProjectLabels } from "@/hooks/useLabels"
 import { useDeleteProject, useProject, useUpdateProject } from "@/hooks/useProjects"
 import { useProjectTasks } from "@/hooks/useTasks"
 import { cn } from "@/lib/utils"
+import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -17,6 +19,8 @@ import { ConfirmDialog } from "@/components/ui/dialog"
 import { FieldRow } from "@/components/ui/field-row"
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog"
 import { TaskGroupList } from "@/components/task/TaskGroupList"
+import { FilterButton } from "@/components/filter/filter-menu"
+import { FilterChipRow } from "@/components/filter/filter-chips"
 import { ProjectPropertiesPanel } from "@/components/project/ProjectPropertiesPanel"
 import {
   ProjectDatesEditor,
@@ -46,20 +50,33 @@ export function ProjectDetailPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: workspaces } = useWorkspaces()
+  // P2 filter 条件列表镜像进 URL（?f= 重复参数，project_issues 面）；
+  // 与后端同规则丢弃非法条目，保证 chip 行显示与后端求值一致；project 字段在本面隐含
+  const conds = useMemo(() => parseConds(searchParams, "project_issues"), [searchParams])
+  const fParams = useMemo(() => encodeConds(conds), [conds])
+  const setConds = (next: FilterCond[]) => {
+    const sp = new URLSearchParams(searchParams)
+    writeConds(sp, next)
+    setSearchParams(sp, { replace: true })
+  }
   const { data: project, isLoading, isError, error } = useProject(workspaceId, projectId)
   const {
     data: tasks,
     isLoading: tasksLoading,
     isError: tasksError,
     error: tasksErrorMessage,
-  } = useProjectTasks(workspaceId, projectId)
+  } = useProjectTasks(workspaceId, projectId, fParams)
   const updateProject = useUpdateProject(workspaceId!)
   const deleteProject = useDeleteProject(workspaceId!)
   const setProjectLabels = useSetProjectLabels(workspaceId!)
 
-  // Tab 状态放 URL（?tab=），刷新/分享后仍停留在当前 tab
+  // Tab 状态放 URL（?tab=），刷新/分享后仍停留在当前 tab；保留 f= 等其余参数（切 tab 不丢 filter）
   const tab = searchParams.get("tab") ?? "overview"
-  const setTab = (key: string) => setSearchParams({ tab: key }, { replace: true })
+  const setTab = (key: string) => {
+    const sp = new URLSearchParams(searchParams)
+    sp.set("tab", key)
+    setSearchParams(sp, { replace: true })
+  }
 
   const [panelOpen, setPanelOpen] = useState(() => {
     try {
@@ -149,15 +166,24 @@ export function ProjectDetailPage() {
           </button>
         ))}
         actions={
-          <button
-            type="button"
-            onClick={togglePanel}
-            aria-label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
-            title={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <PanelRight className="size-4" />
-          </button>
+          <>
+            {/* filter 按钮：对齐 tasks_page（页头 actions），置于折叠面板按钮左侧；
+                仅 Issues tab 显示（Overview 无列表上下文），条件仍由 URL ?f= 承载 */}
+            {tab === "tasks" && (
+              <FilterButton
+                workspaceId={workspaceId!}
+                surface="project_issues"
+                conds={conds}
+                onChange={setConds}
+              />
+            )}
+            <RoundIconButton
+              label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
+              onClick={togglePanel}
+            >
+              <PanelRight className="size-4" />
+            </RoundIconButton>
+          </>
         }
       />
 
@@ -194,6 +220,9 @@ export function ProjectDetailPage() {
               tasks={tasks ?? []}
               tasksLoading={tasksLoading}
               tasksError={tasksError ? displayError(t, tasksErrorMessage, "task.loadFailed") : null}
+              workspaceId={workspaceId!}
+              conds={conds}
+              onChange={setConds}
               onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
               onNewTask={openCreate}
             />
@@ -302,23 +331,41 @@ function TasksContent({
   tasks,
   tasksLoading,
   tasksError,
+  workspaceId,
+  conds,
+  onChange,
   onOpenTask,
   onNewTask,
 }: {
   tasks: TaskRow[]
   tasksLoading: boolean
   tasksError: string | null
+  workspaceId: string
+  conds: FilterCond[]
+  onChange: (next: FilterCond[]) => void
   onOpenTask: (taskId: string) => void
   onNewTask: (status: TaskStatus) => void
 }) {
   const { t } = useTranslation()
+  // 有过滤条件但空 = 无匹配；无过滤条件且空 = 项目暂无任务（对齐 Linear 空态文案）
+  const emptyMsg = conds.length > 0 ? t("filter.emptyResult") : t("project.noTasks")
   return (
     <div className="flex flex-col">
+      {conds.length > 0 && (
+        // bare：本容器已在 px-6 内容区内，去掉 FilterChipRow 自带 mx-6 避免双重内边距
+        <FilterChipRow
+          bare
+          workspaceId={workspaceId}
+          surface="project_issues"
+          conds={conds}
+          onChange={onChange}
+        />
+      )}
       {tasksLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
       {tasksError && <p className="py-4 text-sm text-destructive">{tasksError}</p>}
       {!tasksLoading && !tasksError && tasks.length === 0 && (
         <div className="rounded-lg border border-dashed border-border p-10 text-center">
-          <p className="text-sm text-muted-foreground">{t("project.noTasks")}</p>
+          <p className="text-sm text-muted-foreground">{emptyMsg}</p>
           <Button variant="secondary" size="sm" className="mt-4" onClick={() => onNewTask("todo")}>
             <Plus />
             {t("task.newTask")}
@@ -326,8 +373,13 @@ function TasksContent({
         </div>
       )}
       {tasks.length > 0 && (
-        // 项目任务为全量（无状态筛选）→ 树形视图（跨状态置灰，对齐 Linear）
-        <TaskGroupList tasks={tasks} view="tree" onOpenTask={onOpenTask} onNewTask={onNewTask} />
+        // 无过滤 = 全量树形（跨状态置灰，对齐 Linear）；有过滤 = 平铺（防父任务被过滤致子任务孤立，对齐 TaskListPage）
+        <TaskGroupList
+          tasks={tasks}
+          view={conds.length > 0 ? "flat" : "tree"}
+          onOpenTask={onOpenTask}
+          onNewTask={onNewTask}
+        />
       )}
     </div>
   )

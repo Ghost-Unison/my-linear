@@ -203,8 +203,9 @@ export interface UpdateTaskInput {
   projectId?: string | null
 }
 
-/** 任务列表页筛选 tab（api.md §8：active = todo + in_progress） */
-export type TaskFilter = "active" | "backlog" | "all"
+/** 任务列表页顶部 tab（?tab=）：仅作前端隐式基底作用域，请求时合成为 f= status 条件
+ *（active = todo + in_progress）；后端 filter= 遗留参数已退役（P2 条件列表统一走 f=） */
+export type TaskTab = "active" | "backlog" | "all"
 
 /** 子树节点（GET .../tasks/:id/subtree，api.md §8）：响应仅含 depth > 0 的后代，按 depth、createdAt 排序 */
 export interface TaskNode {

@@ -7,14 +7,16 @@ import type {
 } from "./types"
 
 // Project 接口见 docs/api.md §7（嵌套于 workspace）
-// 排序由后端 handler 层内存完成（api.md §2.2），sort 白名单：name/createdAt/priority/status
+// 排序由后端 handler 层内存完成（api.md §2.2），sort 白名单：name/createdAt/priority/status；
+// P2 增 f= 条件列表重复参数（api.md §7，Go 层过滤引擎求值）
 export const listProjects = (
   workspaceId: string,
-  params?: { sort?: string; order?: string },
+  params?: { sort?: string; order?: string; f?: string[] },
 ) => {
   const qs = new URLSearchParams()
   if (params?.sort) qs.set("sort", params.sort)
   if (params?.order) qs.set("order", params.order)
+  for (const cond of params?.f ?? []) qs.append("f", cond)
   const q = qs.toString()
   return api<ProjectRow[]>(`/workspaces/${workspaceId}/projects${q ? `?${q}` : ""}`)
 }

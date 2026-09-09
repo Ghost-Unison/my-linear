@@ -5,6 +5,7 @@ import { Box, Calendar, ChevronRight, Circle, PanelRight, Plus, User, X } from "
 import type { ParentRef, TaskDetail, TaskNode, TaskStatus, UpdateTaskInput } from "@/api/types"
 import { ApiError } from "@/api/client"
 import { displayError, translateError } from "@/lib/errors"
+import { RoundIconButton } from "@/components/ui/round-icon-button"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useMembers } from "@/hooks/useMembers"
 import { useSetTaskLabels } from "@/hooks/useLabels"
@@ -128,15 +129,12 @@ export function TaskDetailPage() {
           />
         }
         actions={
-          <button
-            type="button"
+          <RoundIconButton
+            label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
             onClick={togglePanel}
-            aria-label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
-            title={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
-            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           >
             <PanelRight className="size-4" />
-          </button>
+          </RoundIconButton>
         }
       />
 

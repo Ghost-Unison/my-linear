@@ -12,15 +12,18 @@ import (
 	"github.com/google/uuid"
 )
 
-// projectFilterSpecs 项目列表可过滤字段白名单（P2.md §2.2）：字段 → 值形态 + 值域校验
+// projectFilterSpecs 项目列表可过滤字段白名单（P2.md §2.2，Linear 实测真值表）：字段 → 值形态 + 值域校验。
+// member 仅 contains 族两操作符且无 none 选项；labels 为四操作符族 + No labels 哨兵；
+// 日期阶梯分方向：created/updated = ago 七档，start/target = from now（target 仅三档），
+// start date 额外提供 No start date 空值条件
 var projectFilterSpecs = map[string]filter.Spec{
 	"status":     {Kind: filter.Single, Validate: func(v string) bool { return store.ProjectStatus(v).Valid() }},
 	"priority":   {Kind: filter.Single, Validate: isPriority},
 	"lead":       {Kind: filter.Single, AllowNone: true, Validate: isUUID},
-	"member":     {Kind: filter.Multi, AllowNone: true, Validate: isUUID},
+	"member":     {Kind: filter.Multi, Ops: []string{"inclAny", "exclAny"}, Validate: isUUID},
 	"labels":     {Kind: filter.Multi, AllowNone: true, Validate: isUUID},
-	"startDate":  {Kind: filter.Day},
-	"targetDate": {Kind: filter.Day},
+	"startDate":  {Kind: filter.Day, AllowNone: true, FromNow: true},
+	"targetDate": {Kind: filter.Day, FromNow: true, Ladders: []string{"3mo", "6mo", "1y"}},
 	"createdAt":  {Kind: filter.Moment},
 	"updatedAt":  {Kind: filter.Moment},
 }

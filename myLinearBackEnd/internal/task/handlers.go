@@ -74,17 +74,9 @@ func ListTasksByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		}
 
 		// P2 条件列表过滤：f= 参数 → 引擎条件列表（P2.md §2.5，Go 层求值）；
-		// 遗留别名 filter= 仅当无 f= 时生效（前端 tab 迁移 f= 后退役）
-		// /tasks?f=status.anyOf.todo,done&f=labels.incl.l1
+		// 前端 tab 已迁移 f=（tab 作用域由前端合成为 status 条件），遗留 filter= 别名退役
+		// /tasks?f=status.isAnyOf.todo,in_progress&f=labels.inclAll.l1
 		conds := filter.Parse(c.QueryArray("f"), taskFilterSpecs)
-		if len(conds) == 0 {
-			legacy, ok := legacyStatusConds(c.DefaultQuery("filter", "all"))
-			if !ok {
-				handler.Error(c, http.StatusBadRequest, "VALIDATION_FAILED", "filter 参数错误")
-				return
-			}
-			conds = legacy
-		}
 
 		//query
 		// P2：过滤求值移至 Go 层引擎，SQL statuses 数组参数退役恒传非 nil 空切片

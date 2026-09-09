@@ -63,7 +63,7 @@
 
 ### 2.2 筛选与排序
 
-- **P2 修订：条件列表过滤由 Go 层引擎求值**（`internal/filter`，P2.md §2.5）。wire 契约为重复查询参数 `f=<field>.<op>.<v1,v2>`（同字段可重复出现，条件间 AND）；操作符按字段值形态分四组：单值 `is/anyOf/not`、多值集合 `incl/notIncl`、时刻与日历日 `before/after`（相对阶梯码 `1d/3d/1w/1mo/3mo/6mo/1y`，cutoff 由 Go 层按 now 计算）。空伪值哨兵 `none` 代表 NULL / 空集合。不下沉 SQL 的理由：条件条数动态，sqlc 固定形状查询无法承载；重复 `incl` 的 AND 不可折叠为单个数组参数；不分页前提下全量行集本就取回内存，与本节"动态排序放 handler 层"同构。Parse 对非法条目（字段/操作符/值三级白名单不命中）**静默丢弃**不整体报错——URL 可分享可书签，须对手改/过期参数健壮。
+- **P2 修订：条件列表过滤由 Go 层引擎求值**（`internal/filter`，P2.md §2.5）。wire 契约为重复查询参数 `f=<field>.<op>.<v1,v2>`（同字段可重复出现，条件间 AND）；操作符（v2，Linear 实测真值表，集合随选中值个数由 UI 联动展示）：单值 `is/isNot/isAnyOf`、多值 labels 族 `inclAll/inclAny/exclAny/exclAll`、多值 members 族 `inclAny/exclAny`（Spec.Ops 覆写）、时刻与日历日 `before/after` + `is/isNot` 承载 none 空值条件与 overdue 逾期谓词（仅 dueDate 提供；is overdue = 非空且早于今天）。相对阶梯码 `1d/3d/1w/1mo/3mo/6mo/1y` 按字段分方向：createdAt/updatedAt = ago 七档、startDate = from now 七档、targetDate = from now 仅三档、dueDate = from now 仅五档 `1d/3d/1w/1mo/3mo`（cutoff 由 Go 层按 now ± offset 计算）。空伪值哨兵 `none` 代表 NULL / 空集合（member 字段不提供 none；多值字段 none 与真实值互斥）。不下沉 SQL 的理由：条件条数动态，sqlc 固定形状查询无法承载；重复 `inclAll` 的 AND 不可折叠为单个数组参数；不分页前提下全量行集本就取回内存，与本节"动态排序放 handler 层"同构。Parse 对非法条目（字段/操作符/值三级白名单不命中）**静默丢弃**不整体报错——URL 可分享可书签，须对手改/过期参数健壮。
 - 下述 P0 的 statuses 数组下沉方案随之退役：`ListTasksByWorkspace` 的 statuses 参数恒传非 nil 空切片（SQL 谓词保留但永不过滤），status 过滤统一走 `f=status.*` 条件。
 - （P0 原案，已被上条取代）**筛选下沉 SQL**，用数组参数表达可选枚举集合（空数组 = 不过滤）：
 
@@ -337,7 +337,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 ## 7. Project 接口（嵌套于 workspace）
 
 ### GET /workspaces/:wid/projects `P0`
-**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/lead/member/labels/startDate/targetDate/createdAt/updatedAt`，`lead/member/labels` 支持 `none`）。`sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）——P2 display options 切片将排序前端化后退役。
+**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/lead/member/labels/startDate/targetDate/createdAt/updatedAt`，`lead/labels/startDate` 支持 `none`）。`sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）——P2 display options 切片将排序前端化后退役。
 **响应** `200`: `ProjectRow[]`（不含已软删）。
 → sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染；`ORDER BY pl.project_id, l.created_at` 保证组内升序，map 未命中的项目由 converter 兜底为 `[]`）；P2 增 `ListProjectMemberIdsByProjectIds`（仅当存在 `f=member.*` 条件时批量取 project→member id 映射供过滤引擎使用，ProjectRow 不带 members）。**排序由 handler 层内存完成**（§2.2），主查询 SQL 不带 ORDER BY
 
@@ -378,7 +378,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 ## 8. Task 接口（嵌套于 workspace）
 
 ### GET /workspaces/:wid/tasks `P0`
-任务列表页主查询。**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/assignee/project/labels/dueDate/createdAt/updatedAt`，`assignee/project/labels` 支持 `none`）。遗留参数 `filter=all|active|backlog` 降级为 status 条件别名（active = `status.anyOf.todo,in_progress`，backlog = `status.anyOf.backlog`），**仅当无任何合法 f= 条件时生效**，前端 tab 迁移 f= 后退役；非法值仍 `400 VALIDATION_FAILED`。
+任务列表页主查询。**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/assignee/project/labels/dueDate/createdAt/updatedAt`，`assignee/project/labels` 支持 `none`，`dueDate` 另支持 `overdue` 谓词与 from now 五档阶梯）。遗留参数 `filter=all|active|backlog` **已退役**（2026-09 A2：前端 tab 迁移为页面侧合成 f= status 条件，后端删除 `legacyStatusConds` 与 filter= 分支；`?tab=` 仅前端 URL 参数，后端不感知）。
 **响应** `200`: `TaskRow[]`（平铺含子任务，按 status 枚举序、createdAt 排序）。
 → sqlc: `ListTasksByWorkspace`：`deleted_at IS NULL` + statuses 数组可选筛选（§2.2）+ 固定排序 + `LEFT JOIN project/member` 组装 ProjectRef/assignee；走 `(workspace_id, parent_id)` 部分索引；P1 增 `ListLabelsByTaskIds` 批量取标签 handler 组装（空为 []）
 

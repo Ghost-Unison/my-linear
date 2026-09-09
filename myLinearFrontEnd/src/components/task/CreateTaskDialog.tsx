@@ -47,7 +47,7 @@ export function CreateTaskDialog({
   // 加载时白发 GET；staleTime Infinity 下首次打开后即长期缓存，只有第一次打开付一次 RTT
   const { data: members } = useMembers(workspaceId, open)
   // 项目选项仅在未锁定归属时需要（任务列表页入口）；锁定时 chip 只读，选项永不渲染
-  const { data: projects } = useProjects(workspaceId, "name", "asc", !project && open)
+  const { data: projects } = useProjects(workspaceId, "name", "asc", [], !project && open)
   // 标签选项：仅 scope=task（R6 后端兜底）
   const { data: taskLabels } = useLabels(workspaceId, "task", open)
   const [title, setTitle] = useState("")

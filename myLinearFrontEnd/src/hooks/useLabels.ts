@@ -21,7 +21,7 @@ import { taskDetailKey, tasksKey } from "./useTasks"
 // 标签域 key：全量 [..., "labels"]；按 scope 过滤 [..., "labels", { scope }]
 // （对象段对齐 projects 的 { sort, order } 变体约定，invalidate 前缀匹配天然覆盖两种形状）
 export const labelsKey = (workspaceId: string) => ["workspaces", workspaceId, "labels"] as const
-const labelsScopeKey = (workspaceId: string, scope: LabelScope) =>
+export const labelsScopeKey = (workspaceId: string, scope: LabelScope) =>
   [...labelsKey(workspaceId), { scope }] as const
 
 /**
@@ -38,6 +38,15 @@ export function useLabels(workspaceId: string | undefined, scope?: LabelScope, e
     staleTime: Infinity,
   })
 }
+
+/** 预取标签集：打开 filter 菜单时按需调用（传 scope 走 scope 变体，否则全量）；
+ *  queryKey/queryFn/staleTime 与 useLabels 单源，命中缓存秒开 */
+export const prefetchLabels = (qc: QueryClient, workspaceId: string, scope?: LabelScope) =>
+  qc.prefetchQuery({
+    queryKey: scope ? labelsScopeKey(workspaceId, scope) : labelsKey(workspaceId),
+    queryFn: () => listLabels(workspaceId, scope),
+    staleTime: Infinity,
+  })
 
 // ---- 标签 CRUD（管理区唯一入口，P1“先定义后使用”策略）----
 
