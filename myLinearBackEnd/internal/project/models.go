@@ -58,13 +58,14 @@ type ProjectRow struct {
 	CreatedAt  time.Time         `json:"createdAt"`
 	UpdatedAt  time.Time         `json:"updatedAt"`
 	Labels     []label.LabelRef  `json:"labels"`
+	// P2-B 行完备补入：display options 的 Member 分组 / Members 列消费（name 升序，空为 []）
+	Members []member.MemberRef `json:"members"`
 }
 
 // 详细信息
 type ProjectDetail struct {
 	ProjectRow
-	Description string             `json:"description"`
-	Members     []member.MemberRef `json:"members"`
+	Description string `json:"description"`
 }
 
 // toProjectRow 两种 sqlc row（列表 ListProjectsByWorkspaceRow / 详情 GetProjectRow）统一转为 ProjectRow，
@@ -73,11 +74,14 @@ type ProjectDetail struct {
 // 分支内直接返回带字段名的字面量，不抽位置参数 builder：startDate/targetDate、createdAt/updatedAt、
 // leadName/leadAvatarColor 等同类型相邻参数一旦调序，编译期无法发现。
 //
-// labelsRef 兜底：来自 handler 的 map 分组时，无标签的项目取不到 key 得到 nil slice；
-// 来自 sqlc :many 零行时同样是 nil。nil 序列化为 JSON null，违反"空 labels 为 []"契约（api.md §4）
-func toProjectRow(pr any, labelsRef []label.LabelRef) ProjectRow {
+// labelsRef / membersRef 兜底：来自 handler 的 map 分组时，无标签/无成员的项目取不到 key 得到 nil slice；
+// 来自 sqlc :many 零行时同样是 nil。nil 序列化为 JSON null，违反"空数组为 []"契约（api.md §4）
+func toProjectRow(pr any, labelsRef []label.LabelRef, membersRef []member.MemberRef) ProjectRow {
 	if labelsRef == nil {
 		labelsRef = make([]label.LabelRef, 0)
+	}
+	if membersRef == nil {
+		membersRef = make([]member.MemberRef, 0)
 	}
 	switch v := pr.(type) {
 	case store.ListProjectsByWorkspaceRow:
@@ -93,6 +97,7 @@ func toProjectRow(pr any, labelsRef []label.LabelRef) ProjectRow {
 			CreatedAt:  v.CreatedAt,
 			UpdatedAt:  v.UpdatedAt,
 			Labels:     labelsRef,
+			Members:    membersRef,
 		}
 	case store.GetProjectRow:
 		return ProjectRow{
@@ -107,20 +112,20 @@ func toProjectRow(pr any, labelsRef []label.LabelRef) ProjectRow {
 			CreatedAt:  v.CreatedAt,
 			UpdatedAt:  v.UpdatedAt,
 			Labels:     labelsRef,
+			Members:    membersRef,
 		}
 	default:
 		panic(fmt.Sprintf("project.toProjectRow: unsupported type %T", v))
 	}
 }
 
-// toProjectDetail 详情装配：ProjectRow + description + members。
+// toProjectDetail 详情装配：ProjectRow + description。
 // 两个内嵌数组都收原始 sqlc 行、在此统一转 Ref，调用方不必记住哪个要预先转换；
 // nil 安全由 label.ToLabelRefs / member.ToMemberRefs 内部的 make 保证（api.md §4 空为 []）。
-// 与 toProjectRow 收 []LabelRef 不同是必然的：列表路径的 labels 来自 map 分组，已是 Ref
+// 与 toProjectRow 收 []LabelRef / []MemberRef 不同是必然的：列表路径两个内嵌数组来自 map 分组，已是 Ref
 func toProjectDetail(pr store.GetProjectRow, labels []store.Label, members []store.Member) ProjectDetail {
 	return ProjectDetail{
-		ProjectRow:  toProjectRow(pr, label.ToLabelRefs(labels)),
+		ProjectRow:  toProjectRow(pr, label.ToLabelRefs(labels), member.ToMemberRefs(members)),
 		Description: pr.Description,
-		Members:     member.ToMemberRefs(members),
 	}
 }

@@ -50,8 +50,8 @@ export function useValueOptions(workspaceId: string, spec: FieldSpec, enabled: b
   const needProjects = spec.source === "projects"
   const { data: members } = useMembers(workspaceId, enabled && needMembers)
   const { data: labels } = useLabels(workspaceId, scope, enabled && needLabels)
-  // 项目选项复用列表页 name&asc 变体缓存（无 f= 条件，全量项目）
-  const { data: projects } = useProjects(workspaceId, "name", "asc", [], enabled && needProjects)
+  // 项目选项复用列表页无条件变体缓存（全量项目，本地按名称升序）
+  const { data: projects } = useProjects(workspaceId, [], enabled && needProjects)
 
   const options: ValueOption[] = []
   // 空伪值选项置顶（Linear 同位：No assignee 在候选列表首行）
@@ -81,7 +81,8 @@ export function useValueOptions(workspaceId: string, spec: FieldSpec, enabled: b
         options.push({ value: l.id, label: l.name, icon: <LabelDot color={l.color} /> })
       break
     case "projects":
-      for (const p of projects ?? []) options.push({ value: p.id, label: p.name })
+      for (const p of [...(projects ?? [])].sort((a, b) => a.name.localeCompare(b.name)))
+        options.push({ value: p.id, label: p.name })
       break
   }
   const ready =
@@ -107,8 +108,8 @@ export function prefetchFilterOptions(qc: QueryClient, workspaceId: string, surf
     if (sc) labelScopes.add(sc)
   }
   for (const scope of labelScopes) prefetchLabels(qc, workspaceId, scope)
-  // projects：筛选选项用 name&asc 变体（与 useValueOptions 一致，命中同一缓存）
-  if (specs.some((s) => s.source === "projects")) prefetchProjects(qc, workspaceId, "name", "asc", [])
+  // projects：筛选选项用无条件变体（与 useValueOptions 一致，命中同一缓存）
+  if (specs.some((s) => s.source === "projects")) prefetchProjects(qc, workspaceId, [])
 }
 
 /** 勾选清单（菜单添加会话与 chip 值编辑共用）：行分两区——checkbox 区切换勾选；其余区（默认 = 同勾选，
@@ -205,7 +206,7 @@ export function useValueLabel(workspaceId: string, spec: FieldSpec) {
   const needProjects = spec.source === "projects"
   const { data: members } = useMembers(workspaceId, needMembers)
   const { data: labels } = useLabels(workspaceId, scope, needLabels)
-  const { data: projects } = useProjects(workspaceId, "name", "asc", [], needProjects)
+  const { data: projects } = useProjects(workspaceId, [], needProjects)
   return (value: string): string => {
     if (value === NONE) return spec.noneKey ? t(spec.noneKey) : value
     if (value === OVERDUE) return t("filter.ladder.overdue")

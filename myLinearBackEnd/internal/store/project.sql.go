@@ -220,6 +220,49 @@ func (q *Queries) ListLabelsByProjectIds(ctx context.Context, projectIds []uuid.
 	return items, nil
 }
 
+const listMembersByProjectIds = `-- name: ListMembersByProjectIds :many
+SELECT pm.project_id, m.id, m.name, m.avatar_color
+FROM project_member pm
+JOIN member m ON pm.member_id = m.id
+WHERE pm.project_id = ANY($1::uuid[])
+ORDER BY pm.project_id, m.name
+`
+
+type ListMembersByProjectIdsRow struct {
+	ProjectID   uuid.UUID `json:"project_id"`
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	AvatarColor string    `json:"avatar_color"`
+}
+
+// 项目列表批量组装用：ProjectRow 内嵌 members（行完备 api.md §2.9，P2-B display options
+// Member 分组 / Members 列消费），与 ListLabelsByProjectIds 同构避免 N+1；
+// 组内顺序与 ListProjectMembers 同构（m.name 升序），故 ORDER BY 带上 m.name
+func (q *Queries) ListMembersByProjectIds(ctx context.Context, projectIds []uuid.UUID) ([]ListMembersByProjectIdsRow, error) {
+	rows, err := q.db.Query(ctx, listMembersByProjectIds, projectIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListMembersByProjectIdsRow
+	for rows.Next() {
+		var i ListMembersByProjectIdsRow
+		if err := rows.Scan(
+			&i.ProjectID,
+			&i.ID,
+			&i.Name,
+			&i.AvatarColor,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectLabels = `-- name: ListProjectLabels :many
 SELECT l.id, l.workspace_id, l.scope, l.name, l.color, l.created_at, l.updated_at
 FROM project_label pl
@@ -247,35 +290,6 @@ func (q *Queries) ListProjectLabels(ctx context.Context, projectID uuid.UUID) ([
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listProjectMemberIdsByProjectIds = `-- name: ListProjectMemberIdsByProjectIds :many
-SELECT pm.project_id, pm.member_id
-FROM project_member pm
-WHERE pm.project_id = ANY($1::uuid[])
-ORDER BY pm.project_id
-`
-
-// P2 member 过滤求值用（P2.md §2.5）：批量取 project→member id 映射，
-// 与 ListLabelsByProjectIds 同构避免 N+1；仅 member 条件存在时调用
-func (q *Queries) ListProjectMemberIdsByProjectIds(ctx context.Context, projectIds []uuid.UUID) ([]ProjectMember, error) {
-	rows, err := q.db.Query(ctx, listProjectMemberIdsByProjectIds, projectIds)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ProjectMember
-	for rows.Next() {
-		var i ProjectMember
-		if err := rows.Scan(&i.ProjectID, &i.MemberID); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -329,6 +343,7 @@ SELECT p.id, p.workspace_id, p.name, p.description, p.status, p.priority, p.lead
 FROM project p 
 LEFT JOIN member m ON p.lead_id = m.id
 WHERE p.workspace_id = $1 AND p.deleted_at IS NULL
+ORDER BY p.created_at DESC
 `
 
 type ListProjectsByWorkspaceRow struct {
@@ -350,6 +365,7 @@ type ListProjectsByWorkspaceRow struct {
 	TaskCount       int64         `json:"task_count"`
 }
 
+// 基底序 created_at 降序（P2-B：sort/order 参数退役后此 ORDER BY 即 Manual ordering 语义，P2.md §3.2）
 func (q *Queries) ListProjectsByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]ListProjectsByWorkspaceRow, error) {
 	rows, err := q.db.Query(ctx, listProjectsByWorkspace, workspaceID)
 	if err != nil {

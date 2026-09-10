@@ -16,6 +16,17 @@ import { useProjectStatusOptions } from "@/components/project/project-status"
 
 // 选项集经 hook 复用 priority-icon / project-status（与详情属性编辑器同源，随语言切换刷新）
 
+/** 创建弹窗预填（展示细节批⑤：分组头 “+” 带入组路径值）；缺省回默认约定 */
+export interface CreateProjectInitial {
+  status?: ProjectStatus
+  priority?: number
+  leadId?: string | null
+  memberIds?: string[]
+  labelIds?: string[]
+  startDate?: string
+  targetDate?: string
+}
+
 /**
  * 新建项目弹窗（对齐 Linear New project，见 P0.md §2）：
  * 大标题输入 + 属性 chip 行 + 描述；labels 多选 scope=project（P1.md §3，提交带 labelIds）；
@@ -25,10 +36,12 @@ import { useProjectStatusOptions } from "@/components/project/project-status"
 export function CreateProjectDialog({
   open,
   workspaceId,
+  initial,
   onClose,
 }: {
   open: boolean
   workspaceId: string
+  initial?: CreateProjectInitial
   onClose: () => void
 }) {
   const { t } = useTranslation()
@@ -52,21 +65,22 @@ export function CreateProjectDialog({
   // 存储原始 error（ApiError / 校验 key 字符串），渲染期经 displayError 解析，切语言即时刷新
   const [error, setError] = useState<unknown>(null)
 
-  // 每次打开时重置表单（默认值见上方约定）
+  // 每次打开时重置表单（默认值见上方约定；initial 预填覆盖其上）
   useEffect(() => {
     if (open) {
       setName("")
       setDescription("")
-      setStatus("backlog")
-      setPriority(0)
-      setLeadId(null)
-      setMemberIds([])
-      setStartDate("")
-      setTargetDate("")
-      setLabelIds([])
+      setStatus(initial?.status ?? "backlog")
+      setPriority(initial?.priority ?? 0)
+      setLeadId(initial?.leadId ?? null)
+      // R2 互斥护栏：预填 members 剔除与 lead 撞车的 id
+      setMemberIds((initial?.memberIds ?? []).filter((m) => m !== (initial?.leadId ?? null)))
+      setStartDate(initial?.startDate ?? "")
+      setTargetDate(initial?.targetDate ?? "")
+      setLabelIds(initial?.labelIds ?? [])
       setError(null)
     }
-  }, [open])
+  }, [open, initial])
 
   // R2 前端护栏：lead 与 members 互斥——选为 lead 的成员自动移出 members
   const changeLead = (id: string) => {

@@ -88,10 +88,10 @@ export function TaskDueDateEditor({ task, onPatch, className }: ChipEditorProps)
   )
 }
 
-/** project 可改挂/置空（变更时后端同步整棵子树，R4）；选项按名称排序 */
+/** project 可改挂/置空（变更时后端同步整棵子树，R4）；选项按名称排序（projectOptions 本地排） */
 export function TaskProjectEditor({ task, workspaceId, onPatch, className }: WorkspaceEditorProps) {
   const { t } = useTranslation()
-  const { data: projects } = useProjects(workspaceId, "name", "asc")
+  const { data: projects } = useProjects(workspaceId)
   return (
     <Select
       value={task.project?.id ?? ""}

@@ -1,14 +1,11 @@
 package project
 
 import (
-	"net/http"
 	"strconv"
 
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/filter"
-	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 
-	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
 
@@ -35,9 +32,9 @@ func isPriority(v string) bool {
 	return err == nil && n >= 0 && n <= 4
 }
 
-// projectValGetter 装配过滤提取器：member 字段依赖批量取回的 project→member id 映射
-// （仅 member 条件存在时取，见 needsMemberSets）；其余字段直读 ProjectRow
-func projectValGetter(memberSets map[uuid.UUID]map[string]struct{}) func(ProjectRow, string) filter.Val {
+// projectValGetter 装配过滤提取器：全部字段直读 ProjectRow（member 集合读行内嵌 Members，
+// P2-B 行完备补入后无需另批量取 id 映射）
+func projectValGetter() func(ProjectRow, string) filter.Val {
 	return func(row ProjectRow, field string) filter.Val {
 		switch field {
 		case "status":
@@ -50,8 +47,12 @@ func projectValGetter(memberSets map[uuid.UUID]map[string]struct{}) func(Project
 			}
 			return filter.Val{Single: row.Lead.ID.String()}
 		case "member":
-			// 无成员的项目取到 nil map = 空集合（伪值 none 语义由引擎处理）
-			return filter.Val{Set: memberSets[row.ID]}
+			// 无成员的项目取到 nil slice = 空集合（伪值 none 语义由引擎处理）
+			set := make(map[string]struct{}, len(row.Members))
+			for _, m := range row.Members {
+				set[m.ID.String()] = struct{}{}
+			}
+			return filter.Val{Set: set}
 		case "labels":
 			set := make(map[string]struct{}, len(row.Labels))
 			for _, l := range row.Labels {
@@ -75,32 +76,4 @@ func projectValGetter(memberSets map[uuid.UUID]map[string]struct{}) func(Project
 		}
 		return filter.Val{}
 	}
-}
-
-// needsMemberSets 是否有条件依赖项目成员集合（决定要不要批量取映射）
-func needsMemberSets(conds []filter.Cond) bool {
-	for _, cd := range conds {
-		if cd.Field == "member" {
-			return true
-		}
-	}
-	return false
-}
-
-// buildProjectMemberSets 批量取 project→member id 映射（ListProjectMemberIdsByProjectIds，
-// 与 buildProjectLabelMap 同构避免 N+1）。失败时已写入 500 响应，返回 ok=false
-func buildProjectMemberSets(c *gin.Context, queries *store.Queries, projectIds []uuid.UUID) (map[uuid.UUID]map[string]struct{}, bool) {
-	rows, err := queries.ListProjectMemberIdsByProjectIds(c.Request.Context(), projectIds)
-	if err != nil {
-		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目成员失败")
-		return nil, false
-	}
-	sets := make(map[uuid.UUID]map[string]struct{}, len(projectIds))
-	for _, r := range rows {
-		if sets[r.ProjectID] == nil {
-			sets[r.ProjectID] = make(map[string]struct{})
-		}
-		sets[r.ProjectID][r.MemberID.String()] = struct{}{}
-	}
-	return sets, true
 }

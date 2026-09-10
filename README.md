@@ -84,7 +84,7 @@ npm run dev
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
 - **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）——**已完成**，并提前做完原属 P3 的标签就地创建
-- **P2**（当前阶段）：saved_view 自定义视图、列表页 filter 按钮与 display options 按钮（分组/排序/展示属性；展示属性为纯前端渲染开关，接口返回完备行）、项目详情页完善
+- **P2**（当前阶段）：saved_view 自定义视图、~~列表页 filter 按钮~~（**A/A2 切片已完成：tasks_page / projects_page / project_issues 三面接入，2026-09**）、display options 按钮（分组/排序/展示属性；展示属性为纯前端渲染开关，接口返回完备行）、项目详情页完善
 - **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、交互细节打磨
 - **P4**：开源化（注册登录、多租户、云上部署）
 

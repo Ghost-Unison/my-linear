@@ -93,13 +93,14 @@ export interface ProjectRow {
   taskCount: number
   /** 行完备原则（api.md §2.9）：P1 列表不渲染，P2 display options 消费；created_at 升序，空为 [] */
   labels: LabelRef[]
+  /** 行完备原则（P2-B 补入）：display options 的 Member 分组 / Members 列消费；name 升序，空为 [] */
+  members: MemberRef[]
   createdAt: string
   updatedAt: string
 }
 
 export interface ProjectDetail extends ProjectRow {
   description: string
-  members: MemberRef[]
 }
 
 export interface CreateProjectInput {

@@ -56,7 +56,7 @@
 
 | 层 | 职责 |
 |----|------|
-| handler（按资源分包：workspace / member / project / task / label） | path/body → DTO 解析与格式校验、业务规则 R1~R6、PATCH presence 合并、动态排序、事务编排、组装响应模型（TaskRow/ProjectRow 等）、按 §1 错误码表写错误响应 |
+| handler（按资源分包：workspace / member / project / task / label） | path/body → DTO 解析与格式校验、业务规则 R1~R6、PATCH presence 合并、事务编排、组装响应模型（TaskRow/ProjectRow 等）、按 §1 错误码表写错误响应 |
 | store（sqlc） | 单条 SQL 的类型安全执行；跨表写操作由 handler 编排多条 sqlc 调用，用 `store.New(pool).WithTx(tx)` 串成事务 |
 
 > P0 未拆独立 service 包（`internal/service/` 目录预留）：业务规则与编排职责内化于各资源的 handler 中。本文档后续的业务规则落点均指 handler 层。
@@ -80,7 +80,7 @@
            WHEN 'done' THEN 4 ELSE 5 END, created_at
   ```
 
-- **动态排序放 handler 层**（仅项目列表 `sort`/`order`）：PG 不支持 `ORDER BY` 列名参数化，P0 不分页且数据量小，查出后按白名单字段（`name/createdAt/priority/status`）内存排序，SQL 不写 ORDER BY。`status` 按生命周期业务序（backlog → planned → in_progress → completed → canceled）而非字典序；同值项保持原相对顺序（稳定排序）。
+- **排序全前端化（P2-B 退役动态排序，2026-09）**：项目列表原 handler 层内存排序（`sort`/`order` 白名单 `name/createdAt/priority/status`）随 display options 切片前端化 ordering 退役；SQL 固定 `ORDER BY p.created_at DESC` 作为基底序（= 前端 Ordering 的 Manual 语义），前端排序覆盖其上（P2.md §3.2）。任务列表基底序不变（status 枚举序 + created_at 升序）。
 
 ### 2.3 审计字段与软删
 
@@ -261,10 +261,11 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
   "startDate": "2026-08-01 | null", "targetDate": "2026-10-01 | null",
   "taskCount": 12,                       // 未软删任务数（含子任务）
   "labels": LabelRef[],                  // P1：行完备原则（§2.9）；P1 列表不渲染，P2 display options 消费
+  "members": MemberRef[],                // P2-B：行完备补入（Member 分组 / Members 列消费；name 升序）
   "createdAt": "...", "updatedAt": "..."
 }
 
-// ProjectDetail = ProjectRow + { "description": "...", "members": MemberRef[] }
+// ProjectDetail = ProjectRow + { "description": "..." }（members 已在 ProjectRow 内，P2-B）
 
 // TaskRow（列表行）
 {
@@ -337,9 +338,9 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 ## 7. Project 接口（嵌套于 workspace）
 
 ### GET /workspaces/:wid/projects `P0`
-**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/lead/member/labels/startDate/targetDate/createdAt/updatedAt`，`lead/labels/startDate` 支持 `none`）。`sort=name|createdAt|priority|status`（默认 `createdAt`）、`order=asc|desc`（默认 `desc`）——P2 display options 切片将排序前端化后退役。
+**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/lead/member/labels/startDate/targetDate/createdAt/updatedAt`，`lead/labels/startDate` 支持 `none`）。~~`sort`/`order`~~ 已退役（P2-B，2026-09：ordering 前端化，基底序 SQL 固定，§2.2）。
 **响应** `200`: `ProjectRow[]`（不含已软删）。
-→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染；`ORDER BY pl.project_id, l.created_at` 保证组内升序，map 未命中的项目由 converter 兜底为 `[]`）；P2 增 `ListProjectMemberIdsByProjectIds`（仅当存在 `f=member.*` 条件时批量取 project→member id 映射供过滤引擎使用，ProjectRow 不带 members）。**排序由 handler 层内存完成**（§2.2），主查询 SQL 不带 ORDER BY
+→ sqlc: `ListProjectsByWorkspace`：`WHERE workspace_id AND deleted_at IS NULL`；`LEFT JOIN member` 取 lead 三列；标量子查询统计未软删 taskCount；`ORDER BY p.created_at DESC` 基底序（P2-B）；P1 增 `ListLabelsByProjectIds` 批量组装 labels（行完备原则 §2.9，列表不渲染；`ORDER BY pl.project_id, l.created_at` 保证组内升序，map 未命中的项目由 converter 兜底为 `[]`）；P2-B 增 `ListMembersByProjectIds` 批量组装 members（行内嵌，Member 分组 / Members 列消费；`ORDER BY pm.project_id, m.name` 与 `ListProjectMembers` 同构），原 `ListProjectMemberIdsByProjectIds`（仅过滤用的 id 映射）随之退役——过滤提取器直读行内嵌 Members
 
 ### POST /workspaces/:wid/projects `P0`
 **请求**:

@@ -1,9 +1,11 @@
 -- name: ListProjectsByWorkspace :many
+-- 基底序 created_at 降序（P2-B：sort/order 参数退役后此 ORDER BY 即 Manual ordering 语义，P2.md §3.2）
 SELECT p.*,m.name AS lead_name, m.avatar_color AS lead_avatar_color,
 (SELECT COUNT(*) FROM task WHERE project_id = p.id AND deleted_at IS NULL) AS task_count 
 FROM project p 
 LEFT JOIN member m ON p.lead_id = m.id
-WHERE p.workspace_id = $1 AND p.deleted_at IS NULL;
+WHERE p.workspace_id = $1 AND p.deleted_at IS NULL
+ORDER BY p.created_at DESC;
 
 
 -- name: ListProjectMembers :many
@@ -32,13 +34,15 @@ JOIN label l ON pl.label_id = l.id
 WHERE pl.project_id = ANY(sqlc.arg('project_ids')::uuid[])
 ORDER BY pl.project_id, l.created_at;
 
--- name: ListProjectMemberIdsByProjectIds :many
--- P2 member 过滤求值用（P2.md §2.5）：批量取 project→member id 映射，
--- 与 ListLabelsByProjectIds 同构避免 N+1；仅 member 条件存在时调用
-SELECT pm.project_id, pm.member_id
+-- name: ListMembersByProjectIds :many
+-- 项目列表批量组装用：ProjectRow 内嵌 members（行完备 api.md §2.9，P2-B display options
+-- Member 分组 / Members 列消费），与 ListLabelsByProjectIds 同构避免 N+1；
+-- 组内顺序与 ListProjectMembers 同构（m.name 升序），故 ORDER BY 带上 m.name
+SELECT pm.project_id, m.id, m.name, m.avatar_color
 FROM project_member pm
+JOIN member m ON pm.member_id = m.id
 WHERE pm.project_id = ANY(sqlc.arg('project_ids')::uuid[])
-ORDER BY pm.project_id;
+ORDER BY pm.project_id, m.name;
 
 
 -- name: CreateProject :one

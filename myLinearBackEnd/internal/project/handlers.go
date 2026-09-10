@@ -2,7 +2,6 @@ package project
 
 import (
 	"bytes"
-	"cmp"
 	"errors"
 	"net/http"
 	"slices"
@@ -12,6 +11,7 @@ import (
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/filter"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/handler"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/label"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/store"
 
 	"github.com/gin-gonic/gin"
@@ -35,17 +35,13 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 			return
 		}
 
-		// P2 条件列表过滤（P2.md §2.5，Go 层求值）
-		// TODO(P2-B)：display options 切片前端化 ordering 后退役 sort/order 参数与 sortProjects
+		// P2 条件列表过滤（P2.md §2.5，Go 层求值）；排序已前端化（P2-B），
+		// 基底序由 ListProjectsByWorkspace 的 ORDER BY created_at DESC 承载（Manual ordering 语义）
 		//把 URL 字符串翻译成条件对象
 		conds := filter.Parse(c.QueryArray("f"), projectFilterSpecs)
 
-		// sort
-		sortField := c.DefaultQuery("sort", "createdAt")
-		orderField := c.DefaultQuery("order", "desc")
-		sortProjects(projects, sortField, orderField)
-
-		// 获取ProjectId - labelRef映射
+		// 批量取回行内嵌引用：labels / members（行完备 api.md §2.9；members 为 P2-B 补入，
+		// display options 的 Member 分组 / Members 列消费）
 		projectIds := make([]uuid.UUID, 0, len(projects))
 		for _, project := range projects {
 			projectIds = append(projectIds, project.ID)
@@ -54,24 +50,19 @@ func ListProjectsByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		if !ok {
 			return
 		}
+		projectMemberMap, ok := buildProjectMemberMap(c, queries, projectIds)
+		if !ok {
+			return
+		}
 
 		// convert to response format
 		projectRows := make([]ProjectRow, 0, len(projects))
 		for _, item := range projects {
-			projectRows = append(projectRows, toProjectRow(item, projectLabelMap[item.ID]))
+			projectRows = append(projectRows, toProjectRow(item, projectLabelMap[item.ID], projectMemberMap[item.ID]))
 		}
 
-		// member 条件依赖批量取回的成员集合（ProjectRow 不带 members，仅条件存在时取）
-		// 逐行过安检，所有条件都点头才放行
-		if needsMemberSets(conds) {
-			memberSets, ok := buildProjectMemberSets(c, queries, projectIds)
-			if !ok {
-				return
-			}
-			projectRows = filter.Apply(projectRows, conds, projectValGetter(memberSets), time.Now())
-		} else {
-			projectRows = filter.Apply(projectRows, conds, projectValGetter(nil), time.Now())
-		}
+		// 逐行过安检，所有条件都点头才放行（member 集合直读行内嵌 Members，无需另取 id 映射）
+		projectRows = filter.Apply(projectRows, conds, projectValGetter(), time.Now())
 		c.JSON(http.StatusOK, projectRows)
 	}
 }
@@ -437,38 +428,25 @@ func SoftDeleteProject(pool *pgxpool.Pool) gin.HandlerFunc {
 
 // util functions
 
-// projectStatus枚举的业务顺序（生命周期：backlog → planned → in_progress → completed → canceled）
-// 不能直接比较字符串：字典序会把 canceled 排在 completed/planned/in_progress 之前，不符合业务顺序
-var projectStatusRank = map[store.ProjectStatus]int{
-	store.ProjectStatusBacklog:    0,
-	store.ProjectStatusPlanned:    1,
-	store.ProjectStatusInProgress: 2,
-	store.ProjectStatusCompleted:  3,
-	store.ProjectStatusCanceled:   4,
-}
-
-// project根据条件排序：slices.SortStableFunc 原地排序，无返回值（不另建切片）
-func sortProjects(projects []store.ListProjectsByWorkspaceRow, field, order string) {
-	asc := order == "asc"
-	// slices.SortFunc 比较函数返回 int：负数表示 a 排在 b 前，降序时取反
-	// time.Time 不满足 cmp.Ordered 约束，需用其 Compare 方法
-	slices.SortStableFunc(projects, func(a, b store.ListProjectsByWorkspaceRow) int {
-		var c int
-		switch field {
-		case "name":
-			c = strings.Compare(a.Name, b.Name)
-		case "priority":
-			c = cmp.Compare(a.Priority, b.Priority)
-		case "status":
-			c = projectStatusRank[a.Status] - projectStatusRank[b.Status]
-		default:
-			c = a.CreatedAt.Compare(b.CreatedAt)
-		}
-		if asc {
-			return c
-		}
-		return -c
-	})
+// buildProjectMemberMap 批量取 project→members 引用列表（ProjectRow 内嵌 members，行完备 P2-B），
+// 与 buildProjectLabelMap 同构避免 N+1；组内 m.name 升序由 SQL 的 ORDER BY pm.project_id, m.name 保证
+//（与 ListProjectMembers 同构），handler 只做 append 不重排；无成员的项目在 map 中无 key，
+// 由 toProjectRow 兜底为 []。失败时已写入 500 响应，返回 ok=false，调用方直接 return（同 buildProjectLabelMap 约定）
+func buildProjectMemberMap(c *gin.Context, queries *store.Queries, projectIds []uuid.UUID) (map[uuid.UUID][]member.MemberRef, bool) {
+	rows, err := queries.ListMembersByProjectIds(c.Request.Context(), projectIds)
+	if err != nil {
+		handler.Error(c, http.StatusInternalServerError, "INTERNAL", "获取项目成员失败")
+		return nil, false
+	}
+	memberMap := make(map[uuid.UUID][]member.MemberRef, len(rows))
+	for _, r := range rows {
+		memberMap[r.ProjectID] = append(memberMap[r.ProjectID], member.MemberRef{
+			ID:          r.ID,
+			Name:        r.Name,
+			AvatarColor: r.AvatarColor,
+		})
+	}
+	return memberMap, true
 }
 
 // 校验与装配 helper：失败时均已写好错误响应并返回 false / ok=false，
