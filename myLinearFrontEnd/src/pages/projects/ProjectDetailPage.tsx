@@ -12,6 +12,7 @@ import { useDeleteProject, useProject, useUpdateProject } from "@/hooks/useProje
 import { useProjectTasks } from "@/hooks/useTasks"
 import { cn } from "@/lib/utils"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
+import { newTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,7 @@ import { CreateTaskDialog } from "@/components/task/CreateTaskDialog"
 import { TaskGroupList } from "@/components/task/TaskGroupList"
 import { FilterButton } from "@/components/filter/filter-menu"
 import { FilterChipRow } from "@/components/filter/filter-chips"
+import { TaskDisplayButton } from "@/components/display/task-display-menu"
 import { ProjectPropertiesPanel } from "@/components/project/ProjectPropertiesPanel"
 import {
   ProjectDatesEditor,
@@ -103,6 +105,11 @@ export function ProjectDetailPage() {
     setCreateOpen(true)
   }
 
+  // display 状态本面一份（project_tasks 切片，P2.md §3 注）：纯内存，切项目/刷新复位；
+  // 默认态同 tasks_page（Status 分组 + sub/nested 双开）；过渡期 fixedDisplay（有过滤自动平铺）
+  // 已退役——过滤下孤儿/链条由规则④孤儿提根置灰与平铺面包屑兜底，tree/flat 交还用户双开关
+  const [display, setDisplay] = useState<TaskDisplayState>(newTaskDisplay)
+
   const [confirmDelete, setConfirmDelete] = useState(false)
 
   // chip/标题/描述编辑共用的 PATCH 入口：统一错误上浮到页内横幅
@@ -167,15 +174,19 @@ export function ProjectDetailPage() {
         ))}
         actions={
           <>
-            {/* filter 按钮：对齐 tasks_page（页头 actions），置于折叠面板按钮左侧；
-                仅 Issues tab 显示（Overview 无列表上下文），条件仍由 URL ?f= 承载 */}
+            {/* filter/display 按钮：对齐 tasks_page（页头 actions，Filter 右侧），置于折叠面板按钮左侧；
+                仅 Issues tab 显示（Overview 无列表上下文），条件仍由 URL ?f= 承载；
+                本面无 tab 基底作用域排除，Completed tasks 行恒展示 */}
             {tab === "tasks" && (
-              <FilterButton
-                workspaceId={workspaceId!}
-                surface="project_issues"
-                conds={conds}
-                onChange={setConds}
-              />
+              <>
+                <FilterButton
+                  workspaceId={workspaceId!}
+                  surface="project_issues"
+                  conds={conds}
+                  onChange={setConds}
+                />
+                <TaskDisplayButton state={display} onChange={setDisplay} showCompletedRow />
+              </>
             )}
             <RoundIconButton
               label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
@@ -223,6 +234,7 @@ export function ProjectDetailPage() {
               workspaceId={workspaceId!}
               conds={conds}
               onChange={setConds}
+              display={display}
               onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
               onNewTask={openCreate}
             />
@@ -334,6 +346,7 @@ function TasksContent({
   workspaceId,
   conds,
   onChange,
+  display,
   onOpenTask,
   onNewTask,
 }: {
@@ -343,6 +356,8 @@ function TasksContent({
   workspaceId: string
   conds: FilterCond[]
   onChange: (next: FilterCond[]) => void
+  /** display 状态由页面持有（页头 TaskDisplayButton 写、本列表读，P2.md §3 project_tasks 注） */
+  display: TaskDisplayState
   onOpenTask: (taskId: string) => void
   onNewTask: (status: TaskStatus) => void
 }) {
@@ -373,10 +388,10 @@ function TasksContent({
         </div>
       )}
       {tasks.length > 0 && (
-        // 无过滤 = 全量树形（跨状态置灰，对齐 Linear）；有过滤 = 平铺（防父任务被过滤致子任务孤立，对齐 TaskListPage）
         <TaskGroupList
           tasks={tasks}
-          view={conds.length > 0 ? "flat" : "tree"}
+          state={display}
+          workspaceId={workspaceId}
           onOpenTask={onOpenTask}
           onNewTask={onNewTask}
         />

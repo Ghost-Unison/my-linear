@@ -18,6 +18,7 @@ const en = {
     saveFailed: "Failed to save",
     createFailed: "Failed to create",
     name: "Name",
+    title: "Title",
     description: "Description",
     status: "Status",
     priority: "Priority",
@@ -280,6 +281,11 @@ const en = {
     bucketHalf1: "{{year}} H1",
     bucketHalf2: "{{year}} H2",
     emptyHidden: "All matching projects are closed. Enable “Show closed projects” in Display options to see them.",
+    completedTasks: "Completed tasks",
+    showSubIssues: "Show sub-issues",
+    nestedSubIssues: "Nested sub-issues",
+    emptyHiddenTasks:
+      "All matching tasks are completed. Set “Completed tasks” to All in Display options to see them.",
   },
   task: {
     newTask: "New task",

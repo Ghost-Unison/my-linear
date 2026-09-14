@@ -1,45 +1,45 @@
-// Display options 按钮（页头第二个圆形滑杆按钮）+ popover 面板（P2.md §3 + B 切片修订注）：
-// Grouping / Sub-grouping / Ordering / Timeframe / Show closed projects +
-// List options（Show empty groups 开关 / Display properties 列 chip）+
-// 底部 Reset（回全局默认 DEFAULT_DISPLAY，蓝点熄灭态）。
-// 纯前端内存状态（总决策 2）：面板操作只写页面 state，不发请求、不进 URL；
-// 展示样式行本切片仅 List（Board/Timeline 后置，用户定案 1）。
+// 任务列表 Display options 按钮 + popover 面板（tasks_page 切片，P2.md §3 + 2026-09 任务切片修订注）：
+// Grouping / Sub-grouping / Ordering / Completed tasks（仅 All tab）/ Show sub-issues +
+// List options（Nested sub-issues 条件行 / Show empty groups / Display properties 列 chip）+
+// 底部 Reset（仅非默认态）。样式与项目侧面板同构（共享 panel-parts 原语）。
+// 纯前端内存状态（总决策 2）：面板操作只写页面 state（每 tab 一份），不发请求、不进 URL。
+// 后置后续优化（本切片不渲染控件，见 P2.md 修订注）：
+// - Grouping 行前的组序拖拽入口（Linear Group ordering 面板，用户图2）；
+// - Order completed by recency 行（无完成时间字段，用户图4）。
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react"
 import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
 import { ArrowDown, ArrowUp, List, SlidersHorizontal } from "lucide-react"
 import {
-  COLUMNS,
-  DEFAULT_DISPLAY,
-  GROUP_FIELDS,
-  ORDER_FIELDS,
-  TIMEFRAMES,
-  groupFieldLabelKey,
-  isDefaultDisplay,
-  needsTimeframe,
-  orderFieldColumn,
-  orderFieldLabelKey,
-  timeframeLabelKey,
-  type GroupField,
-  type OrderField,
-  type ProjectDisplayState,
-  type Timeframe,
-} from "@/lib/display-state"
+  DEFAULT_TASK_DISPLAY,
+  TASK_COLUMNS,
+  TASK_GROUP_FIELDS,
+  TASK_ORDER_FIELDS,
+  isDefaultTaskDisplay,
+  taskGroupFieldLabelKey,
+  taskOrderColumn,
+  taskOrderFieldLabelKey,
+  type TaskDisplayState,
+  type TaskGroupField,
+  type TaskOrderField,
+} from "@/lib/task-display-state"
 import { cn } from "@/lib/utils"
 import { usePopover } from "@/components/ui/popover"
 import { RoundIconButton } from "@/components/ui/round-icon-button"
 import { ResetRow, Row, Switch, ValuePicker } from "@/components/display/panel-parts"
 
-/** 面板定宽 320（Linear 同位观感）；按钮在页头右缘，恒右对齐 trigger 右缘向左展开 */
+/** 面板定宽 320（Linear 同位观感，与项目侧面板一致）；恒右对齐 trigger 右缘向左展开 */
 const PANEL_W = 320
 
-interface DisplayButtonProps {
-  state: ProjectDisplayState
-  onChange: (next: ProjectDisplayState) => void
+interface TaskDisplayButtonProps {
+  state: TaskDisplayState
+  onChange: (next: TaskDisplayState) => void
+  /** Completed tasks 行仅 All tab 展示（其余 tab 基底条件已排除 completed，用户定案 2026-09） */
+  showCompletedRow: boolean
 }
 
 /** 页头 display 按钮：Linear 圆形风格，非默认态亮蓝点（同 filter 按钮约定） */
-export function DisplayButton({ state, onChange }: DisplayButtonProps) {
+export function TaskDisplayButton({ state, onChange, showCompletedRow }: TaskDisplayButtonProps) {
   const { t } = useTranslation()
   const { open, setOpen, ref, panelRef } = usePopover()
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -51,15 +51,15 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
     setStyle({ top: rect.bottom + 4, right: window.innerWidth - rect.right, width: PANEL_W })
   }, [open])
 
-  const set = (patch: Partial<ProjectDisplayState>) => onChange({ ...state, ...patch })
+  const set = (patch: Partial<TaskDisplayState>) => onChange({ ...state, ...patch })
   // 一级回 No grouping = 二级直接清除（用户定案 3）；一级切新值与二级撞车时二级归位 none
-  const setGrouping = (f: GroupField) =>
+  const setGrouping = (f: TaskGroupField) =>
     f === "none"
       ? set({ grouping: "none", subGrouping: "none" })
       : set({ grouping: f, subGrouping: state.subGrouping === f ? "none" : state.subGrouping })
   // Ordering → Display properties 联动（用户定案 6）：排序属性自动勾选对应列；切字段方向复位 asc
-  const setOrderField = (f: OrderField) => {
-    const col = orderFieldColumn(f)
+  const setOrderField = (f: TaskOrderField) => {
+    const col = taskOrderColumn(f)
     set({
       orderField: f,
       orderDir: "asc",
@@ -72,7 +72,7 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
       <RoundIconButton
         ref={triggerRef}
         label={t("display.button")}
-        active={!isDefaultDisplay(state)}
+        active={!isDefaultTaskDisplay(state)}
         onClick={() => setOpen(!open)}
       >
         <SlidersHorizontal className="size-4" />
@@ -85,7 +85,7 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
             style={style}
             className="fixed z-[60] rounded-lg border border-border bg-popover py-2 shadow-lg"
           >
-            {/* 展示样式行：本切片仅 List 一档（选中态药丸） */}
+            {/* 展示样式行：本切片仅 List 一档（选中态药丸；Board/Timeline 后置） */}
             <div className="px-3 pb-2 pt-1">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-4 py-1.5 text-xs font-medium text-foreground">
                 <List className="size-3.5" />
@@ -94,11 +94,15 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
             </div>
 
             <Row label={t("display.grouping")}>
+              {/* 组序拖拽入口按钮（Linear 同位 ⇅）后置后续优化，本切片不渲染 */}
               <ValuePicker
                 ariaLabel={t("display.grouping")}
                 value={state.grouping}
-                options={GROUP_FIELDS.map((f) => ({ value: f, label: t(groupFieldLabelKey(f)) }))}
-                onChange={(v) => setGrouping(v as GroupField)}
+                options={TASK_GROUP_FIELDS.map((f) => ({
+                  value: f,
+                  label: t(taskGroupFieldLabelKey(f)),
+                }))}
+                onChange={(v) => setGrouping(v as TaskGroupField)}
               />
             </Row>
             {/* Sub-grouping 行仅一级 ≠ none 时展示（用户定案 3）；选项排除一级已选属性 */}
@@ -107,11 +111,11 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
                 <ValuePicker
                   ariaLabel={t("display.subGrouping")}
                   value={state.subGrouping}
-                  options={GROUP_FIELDS.filter((f) => f !== state.grouping).map((f) => ({
+                  options={TASK_GROUP_FIELDS.filter((f) => f !== state.grouping).map((f) => ({
                     value: f,
-                    label: t(groupFieldLabelKey(f)),
+                    label: t(taskGroupFieldLabelKey(f)),
                   }))}
-                  onChange={(v) => set({ subGrouping: v as GroupField })}
+                  onChange={(v) => set({ subGrouping: v as TaskGroupField })}
                 />
               </Row>
             )}
@@ -131,37 +135,50 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
               <ValuePicker
                 ariaLabel={t("display.ordering")}
                 value={state.orderField}
-                options={ORDER_FIELDS.map((f) => ({ value: f, label: t(orderFieldLabelKey(f)) }))}
-                onChange={(v) => setOrderField(v as OrderField)}
+                options={TASK_ORDER_FIELDS.map((f) => ({
+                  value: f,
+                  label: t(taskOrderFieldLabelKey(f)),
+                }))}
+                onChange={(v) => setOrderField(v as TaskOrderField)}
               />
             </Row>
-            {/* Timeframe 行：一级或二级任一按日期分组才展示（用户定案 7） */}
-            {needsTimeframe(state) && (
-              <Row label={t("display.timeframeRow")}>
+
+            <div className="my-2 border-t border-border" />
+            {/* Completed tasks 行仅 All tab（用户定案 2026-09）；Done/Canceled 都算 completed */}
+            {showCompletedRow && (
+              <Row label={t("display.completedTasks")}>
                 <ValuePicker
-                  ariaLabel={t("display.timeframeRow")}
-                  value={state.timeframe}
-                  options={TIMEFRAMES.map((tf) => ({ value: tf, label: t(timeframeLabelKey(tf)) }))}
-                  onChange={(v) => set({ timeframe: v as Timeframe })}
+                  ariaLabel={t("display.completedTasks")}
+                  value={state.showCompleted}
+                  options={[
+                    { value: "all", label: t("display.closedAll") },
+                    { value: "none", label: t("display.closedNone") },
+                  ]}
+                  onChange={(v) => set({ showCompleted: v as "none" | "all" })}
                 />
               </Row>
             )}
-
-            <div className="my-2 border-t border-border" />
-            <Row label={t("display.showClosed")}>
-              <ValuePicker
-                ariaLabel={t("display.showClosed")}
-                value={state.showClosed}
-                options={[
-                  { value: "none", label: t("display.closedNone") },
-                  { value: "all", label: t("display.closedAll") },
-                ]}
-                onChange={(v) => set({ showClosed: v as "none" | "all" })}
+            <Row label={t("display.showSubIssues")}>
+              <Switch
+                on={state.showSubIssues}
+                label={t("display.showSubIssues")}
+                // 两开关独立：show sub 关时 nested 仅隐藏不重置，回开时保留原值（验证矩阵 tdp-09 修订）
+                onToggle={() => set({ showSubIssues: !state.showSubIssues })}
               />
             </Row>
 
             <div className="my-2 border-t border-border" />
             <div className="px-3 pb-1 text-xs font-medium text-foreground">{t("display.listOptions")}</div>
+            {/* Nested sub-issues 行仅 show sub-issues 开时展示（用户图9） */}
+            {state.showSubIssues && (
+              <Row label={t("display.nestedSubIssues")}>
+                <Switch
+                  on={state.nestedSubIssues}
+                  label={t("display.nestedSubIssues")}
+                  onToggle={() => set({ nestedSubIssues: !state.nestedSubIssues })}
+                />
+              </Row>
+            )}
             <Row label={t("display.showEmptyGroups")}>
               <Switch
                 on={state.showEmptyGroups}
@@ -173,7 +190,7 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
               {t("display.displayProperties")}
             </div>
             <div className="flex flex-wrap gap-1.5 px-3 pb-2">
-              {COLUMNS.map((c) => (
+              {TASK_COLUMNS.map((c) => (
                 <button
                   key={c.key}
                   type="button"
@@ -190,8 +207,14 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
               ))}
             </div>
 
-            {/* 面板底部 Reset：仅非默认态渲染（用户定案 2026-09 任务切片，两侧面板统一） */}
-            {!isDefaultDisplay(state) && <ResetRow onReset={() => onChange(DEFAULT_DISPLAY)} />}
+            {/* 面板底部 Reset：仅非默认态渲染（用户定案 2026-09） */}
+            {!isDefaultTaskDisplay(state) && (
+              <ResetRow
+                onReset={() =>
+                  onChange({ ...DEFAULT_TASK_DISPLAY, visible: { ...DEFAULT_TASK_DISPLAY.visible } })
+                }
+              />
+            )}
           </div>,
           document.body,
         )}

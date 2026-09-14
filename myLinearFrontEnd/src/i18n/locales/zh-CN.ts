@@ -21,6 +21,7 @@ const zhCN: Translation = {
     saveFailed: "保存失败",
     createFailed: "创建失败",
     name: "名称",
+    title: "标题",
     description: "描述",
     status: "状态",
     priority: "优先级",
@@ -277,6 +278,10 @@ const zhCN: Translation = {
     bucketHalf1: "{{year}} 上半年",
     bucketHalf2: "{{year}} 下半年",
     emptyHidden: "符合筛选的项目均已关闭。在显示选项中开启“显示已关闭项目”即可查看。",
+    completedTasks: "已完成任务",
+    showSubIssues: "显示子任务",
+    nestedSubIssues: "嵌套子任务",
+    emptyHiddenTasks: "符合筛选的任务均已完结。在显示选项中将“已完成任务”设为全部即可查看。",
   },
   task: {
     newTask: "新建任务",

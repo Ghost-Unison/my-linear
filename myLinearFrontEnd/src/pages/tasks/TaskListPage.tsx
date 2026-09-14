@@ -2,9 +2,10 @@ import { useMemo, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Plus } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import type { TaskStatus, TaskTab } from "@/api/types"
+import type { ProjectRef, TaskStatus, TaskTab } from "@/api/types"
 import { displayError } from "@/lib/errors"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
+import { newTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useWorkspaceTasks } from "@/hooks/useTasks"
 import { PageHeader, tabPill } from "@/components/layout/PageHeader"
@@ -12,6 +13,7 @@ import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { FilterButton } from "@/components/filter/filter-menu"
 import { FilterChipRow } from "@/components/filter/filter-chips"
+import { TaskDisplayButton } from "@/components/display/task-display-menu"
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog"
 import { TaskGroupList } from "@/components/task/TaskGroupList"
 
@@ -56,10 +58,24 @@ export function TaskListPage() {
 
   const { data: tasks, isLoading, isError, error } = useWorkspaceTasks(workspaceId, fParams)
 
+  // display 状态每 tab 一份（用户定案 2026-09）：纯前端内存，切 tab 不丢、刷新复位；
+  // 各 tab 默认态同用户图1（status 分组 + sub/nested 双开）
+  const [displayByTab, setDisplayByTab] = useState<Record<TaskTab, TaskDisplayState>>(() => ({
+    active: newTaskDisplay(),
+    backlog: newTaskDisplay(),
+    all: newTaskDisplay(),
+  }))
+  const display = displayByTab[tab]
+  const setDisplay = (next: TaskDisplayState) =>
+    setDisplayByTab((prev) => ({ ...prev, [tab]: next }))
+
   const [createOpen, setCreateOpen] = useState(false)
   const [createStatus, setCreateStatus] = useState<TaskStatus>("todo")
-  const openCreate = (status: TaskStatus) => {
+  // 组头 "+" 预填：status 必传；project 组路径命中时锁定归属
+  const [createProject, setCreateProject] = useState<ProjectRef | undefined>(undefined)
+  const openCreate = (status: TaskStatus, project?: ProjectRef) => {
     setCreateStatus(status)
+    setCreateProject(project)
     setCreateOpen(true)
   }
 
@@ -86,6 +102,12 @@ export function TaskListPage() {
               surface="tasks_page"
               conds={conds}
               onChange={setConds}
+            />
+            {/* Completed tasks 行仅 All tab（其余 tab 基底条件已排除 completed） */}
+            <TaskDisplayButton
+              state={display}
+              onChange={setDisplay}
+              showCompletedRow={tab === "all"}
             />
             {/* 与 New project / Add a member 同款 ghost 按钮 */}
             <Button variant="ghost" size="sm" onClick={() => openCreate("todo")}>
@@ -132,8 +154,8 @@ export function TaskListPage() {
         {(tasks?.length ?? 0) > 0 && (
           <TaskGroupList
             tasks={tasks!}
-            // All = 全量树形（跨状态置灰）；Active/Backlog = 筛选平铺（父任务以面包屑体现）
-            view={tab === "all" ? "tree" : "flat"}
+            state={display}
+            workspaceId={workspaceId!}
             onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
             onNewTask={openCreate}
             onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}
@@ -141,10 +163,11 @@ export function TaskListPage() {
         )}
       </div>
 
-      {/* 列表页入口不锁定项目（任务可不归属项目），弹窗内自选 */}
+      {/* 列表页入口不锁定项目（任务可不归属项目），弹窗内自选；project 组头 "+" 预填锁定 */}
       <CreateTaskDialog
         open={createOpen}
         workspaceId={workspaceId!}
+        project={createProject}
         defaultStatus={createStatus}
         onClose={() => setCreateOpen(false)}
       />
