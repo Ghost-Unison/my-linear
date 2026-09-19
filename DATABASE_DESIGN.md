@@ -1,7 +1,7 @@
 # myLinear 数据库设计文档
 
-> 版本：v1.3（定稿）
-> 变更：v1.2 task 独立实体化（project_id 可空 + workspace_id 直挂）；v1.3 saved_view 增加 entity_type / description
+> 版本：v1.4（定稿）
+> 变更：v1.2 task 独立实体化（project_id 可空 + workspace_id 直挂）；v1.3 saved_view 增加 entity_type / description；**v1.4 saved_view 增加 surface（view_surface 四值枚举）+ 可空 project_id（project_issues 面项目级 scope），索引改建 (workspace_id, surface, entity_type)**
 > 目标数据库：PostgreSQL 17（本地 Docker 实例）
 > 设计方式：database-first，goose 迁移文件为唯一 schema 真相，sqlc 生成类型安全的查询代码
 
@@ -116,6 +116,8 @@ erDiagram
         uuid id PK
         uuid workspace_id FK
         view_entity entity_type "task 或 project"
+        view_surface surface "视图归属面（v1.4）"
+        uuid project_id FK, NULL "project_issues 面项目级 scope（v1.4）"
         text name
         text description
         jsonb config
@@ -245,23 +247,27 @@ erDiagram
 | id | uuid | PK | |
 | workspace_id | uuid | NOT NULL, FK→workspace ON DELETE CASCADE | |
 | entity_type | view_entity | NOT NULL | `task`=任务视图，`project`=项目视图（对齐 Views 页两个 tab） |
-| name | text | NOT NULL | 视图名，如"按优先级看板" |
+| surface | view_surface | NOT NULL DEFAULT 'views_page' | **v1.4**：视图归属面 `tasks_page / projects_page / views_page / project_issues`（双轨隔离，P2.md §4.1） |
+| project_id | uuid | NULL, FK→project ON DELETE CASCADE | **v1.4**：仅 project_issues 面非空（项目级 scope）；删项目 CASCADE 其 view |
+| name | text | NOT NULL | 视图名，如“按优先级看板” |
 | description | text | NOT NULL DEFAULT '' | 视图描述 |
 | config | jsonb | NOT NULL DEFAULT '{}' | 筛选 + 展示控制配置 |
 | created_at / updated_at | timestamptz | NOT NULL DEFAULT now() | |
 
-索引：`(workspace_id, entity_type)` —— Views 页按实体类型分 tab 查询。
+索引：`(workspace_id, surface, entity_type)` —— 页面级 tab 行 / Views 页分 tab / 项目级关联查询（**v1.4 改建**，原 `(workspace_id, entity_type)`）。
 
-config 结构约定（应用层解析，jsonb 存储）：
+surface 与 entity_type 一致性由后端强制：`tasks_page ⇒ task`、`projects_page ⇒ project`、`project_issues ⇒ task ∧ project_id 必传且属同 workspace`；`views_page` 两者皆可；project_id 仅 project_issues 面可非空。
+
+config 结构约定（**后端 opaque**：CRUD 原样存、原样返回、不解释内容，仅要求 JSON object；契约见 P2.md §4.2——filters 有序条件列表 + display 面板四 section 状态，camelCase）：
 
 ```json
 {
-  "group_by": "status | priority | label | assignee | project",
-  "order_by": "created_at | priority | due_date | title",
-  "filters": { "label_ids": [], "assignee_id": null, "statuses": [] },
-  "visible_fields": ["priority", "labels", "due_date", "assignee"]
+  "filters": [{ "field": "status", "op": "isAnyOf", "values": ["todo", "in_progress"] }],
+  "display": { "groupBy": "priority", "ordering": { "field": "createdAt", "dir": "desc" }, "visible": { "priority": true }, "showSubtasks": true, "nesting": true }
 }
 ```
+
+> **jsonb 归一化注（v1.4 实测登记）**：jsonb 二进制存储会归一化键序/空白/重复键，读回与写入**字节不等价但语义等价**。“原样返回”指语义原样（不解释、不增删键）；前端偏离比对（currentState vs view.config）必须用解析后对象深比较，禁字符串比对。
 
 ### 4.10 字段必填性约定（创建时）
 

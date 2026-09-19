@@ -9,6 +9,7 @@ import (
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/member"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/project"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/task"
+	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/view"
 	"github.com/Ghost-Unison/my-linear/myLinearBackEnd/internal/workspace"
 )
 
@@ -65,6 +66,15 @@ func New(pool *pgxpool.Pool) *gin.Engine {
 			labels.POST("", label.CreateLabel(pool))
 			labels.PATCH("/:labelId", label.UpdateLabel(pool))
 			labels.DELETE("/:labelId", label.DeleteLabel(pool))
+		}
+
+		views := workspaces.Group("/:workspaceId/views")
+		{
+			views.GET("", view.ListViews(pool))
+			views.POST("", view.CreateView(pool))
+			views.GET("/:viewId", view.GetView(pool))
+			views.PATCH("/:viewId", view.UpdateView(pool))
+			views.DELETE("/:viewId", view.DeleteView(pool))
 		}
 	}
 

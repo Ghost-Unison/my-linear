@@ -225,3 +225,58 @@ export interface TaskNode {
   /** 子任务行与列表行同渲染（api.md §4） */
   labels: LabelRef[]
 }
+
+// ---- View（api.md §10，P2 saved_view CRUD）----
+
+/** 视图归属面（P2.md §4.1 surface 列）：页面级 view 只作该页 tab，Views 页只列 views_page */
+export type ViewSurface = "tasks_page" | "projects_page" | "views_page" | "project_issues"
+
+/** 视图实体类型：surface⇒entityType 一致性由后端强制（P2.md §4.1） */
+export type ViewEntityType = "task" | "project"
+
+/** config.filters 条目：与 URL f= 编码同构（field/op/values 三元组，P2.md §4.2）。
+ *  结构等价 lib/filter-state 的 FilterCond，此处独立定义避免 api 层反向依赖 lib 层 */
+export interface ViewConfigFilter {
+  field: string
+  op: string
+  values: string[]
+}
+
+/** config 形状（P2.md §4.2）：后端 opaque 透传（jsonb 归一化键序，api.md §10 注），
+ *  前端按 surface 解释 display（projects_page → ProjectDisplayState / tasks_page → TaskDisplayState）。
+ *  偏离比对必须解析后对象深比较，禁字符串比对 */
+export interface ViewConfig {
+  filters?: ViewConfigFilter[]
+  display?: Record<string, unknown>
+}
+
+export interface View {
+  id: string
+  workspaceId: string
+  entityType: ViewEntityType
+  surface: ViewSurface
+  /** 仅 project_issues 面非空（项目级 scope，P2.md §4.1） */
+  projectId: string | null
+  name: string
+  description: string
+  config: ViewConfig
+  createdAt: string
+  updatedAt: string
+}
+
+export interface CreateViewInput {
+  name: string
+  description?: string
+  surface: ViewSurface
+  entityType: ViewEntityType
+  /** 仅 project_issues 面可传（其余面传值 400） */
+  projectId?: string
+  config?: ViewConfig
+}
+
+/** PATCH presence 三态（api.md §2.4）：缺席不动；name/description/config 均不允许显式 null */
+export interface UpdateViewInput {
+  name?: string
+  description?: string
+  config?: ViewConfig
+}

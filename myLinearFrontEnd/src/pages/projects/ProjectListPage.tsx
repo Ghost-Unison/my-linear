@@ -1,10 +1,11 @@
-import { useMemo, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { ArrowDown, ArrowUp, Box, Plus } from "lucide-react"
-import type { ProjectRow } from "@/api/types"
+import type { ProjectRow, View } from "@/api/types"
 import { useProjects } from "@/hooks/useProjects"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
+import { useCreateView, useDeleteView, useUpdateView, useViews } from "@/hooks/useViews"
 import { colorFor } from "@/lib/color"
 import { displayError } from "@/lib/errors"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
@@ -13,6 +14,7 @@ import {
   buildGroups,
   DEFAULT_DISPLAY,
   gridTemplateCols,
+  isSameDisplay,
   orderFieldColumn,
   sortRows,
   tableMinRem,
@@ -22,16 +24,24 @@ import {
   type ProjectColumn,
   type ProjectDisplayState,
 } from "@/lib/display-state"
+import {
+  decodeProjectConfig,
+  encodeProjectConfig,
+  type ProjectViewSnapshot,
+} from "@/lib/view-state"
 import { cn } from "@/lib/utils"
 import { MemberAvatar } from "@/components/ui/avatar"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
+import { ConfirmDialog } from "@/components/ui/dialog"
 import { LabelDot } from "@/components/ui/label-options"
 import { PriorityIcon, usePriorityLabel } from "@/components/ui/priority-icon"
-import { PageHeader, tabPill } from "@/components/layout/PageHeader"
+import { PageHeader } from "@/components/layout/PageHeader"
 import { FilterButton } from "@/components/filter/filter-menu"
 import { FilterChipRow } from "@/components/filter/filter-chips"
 import { DisplayButton } from "@/components/display/display-menu"
+import { ViewTabs } from "@/components/view/ViewTabs"
+import { ViewEditPanel } from "@/components/view/ViewEditPanel"
 import { fmtDay, ProjectGroupTree, useGroupValueMeta } from "@/components/display/project-groups"
 import { CreateProjectDialog, type CreateProjectInitial } from "@/components/project/CreateProjectDialog"
 import {
@@ -39,24 +49,40 @@ import {
   useProjectStatusLabel,
 } from "@/components/project/project-status"
 
+/** 编辑沙箱 draft（P2.md §1.9）：非空 = 编辑期，隔离预览；Save 提交 / Cancel 全弃 */
+interface ViewDraft {
+  mode: "new" | "edit"
+  viewId?: string
+  name: string
+  description: string
+  filters: FilterCond[]
+  display: ProjectDisplayState
+  /** 编辑期 Reset 基线（新建 = DEFAULT_DISPLAY / Edit = config.display，§1.9 Reset 三档） */
+  baseline: ProjectDisplayState
+  /** 编辑保存后恢复该 view 的临时条件；新 view 总是从空临时层开始。 */
+  resumeFilters: FilterCond[]
+}
+
+type ViewPanel = "top-filter" | "top-display" | "draft-filter" | "draft-display" | "chips-filter"
+const PRESET_TAB = "all"
+const EMPTY_FILTERS: FilterCond[] = []
+
 // /w/:workspaceId/projects → 项目列表（P0.md §2：行只读，点击进详情页；不做行内编辑）
 // P2-B：display options 接通——filter 决定取数（进 URL），display 纯内存（总决策 2）：
 // 基底管线 = showClosed 作用域 → ordering 排序 → 两级分组；表头/行网格由可见列配置单源驱动
 export function ProjectListPage() {
-  const { t, i18n } = useTranslation()
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  // 工作区切换时清空本页面的 tab 会话，防止草稿和 display 跨工作区串用。
+  return <ProjectListContent key={workspaceId} workspaceId={workspaceId!} />
+}
+
+function ProjectListContent({ workspaceId }: { workspaceId: string }) {
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
-  // P2 条件列表镜像进 URL（?f= 重复参数，方案 A）；与后端 Parse 同规则丢弃非法条目，
-  // 保证 chip 行显示与后端求值永远一致
+  // 浏览 URL 的 f= 仅承载临时条件；view= 指向保存的基底，取数时才合成 AND。
   const conds = useMemo(() => parseConds(searchParams, "projects_page"), [searchParams])
-  const fParams = useMemo(() => encodeConds(conds), [conds])
-  const setConds = (next: FilterCond[]) => {
-    const sp = new URLSearchParams(searchParams)
-    writeConds(sp, next)
-    setSearchParams(sp, { replace: true })
-  }
-  const { data: projects, isLoading, isError, error } = useProjects(workspaceId, fParams)
+  const [draft, setDraft] = useState<ViewDraft | null>(null)
   const { data: workspaces } = useWorkspaces()
   const [createOpen, setCreateOpen] = useState(false)
   // ⑤ 分组头 “+” 预填：undefined = 页头 New project（全默认）
@@ -65,13 +91,208 @@ export function ProjectListPage() {
     setCreateInitial(initial)
     setCreateOpen(true)
   }
-  // display 状态纯内存：不进 URL，刷新/切页重置默认（总决策 2）
-  const [display, setDisplay] = useState<ProjectDisplayState>(DEFAULT_DISPLAY)
   const workspaceName =
     workspaces?.find((w) => w.id === workspaceId)?.name ?? t("common.workspaceFallback")
+  const viewQuery = useViews(workspaceId, "projects_page")
+  const views = viewQuery.data
+  const createView = useCreateView(workspaceId)
+  const updateView = useUpdateView(workspaceId)
+  const deleteView = useDeleteView(workspaceId)
+  const busy = createView.isPending || updateView.isPending || deleteView.isPending
+  const [viewError, setViewError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<View | null>(null)
+  const activeViewId = searchParams.get("view")
+  const tabKey = activeViewId ?? PRESET_TAB
+  const activeView = views?.find((v) => v.id === activeViewId) ?? null
+  const saved = useMemo(() => decodeProjectConfig(activeView?.config), [activeView])
+  // 每个 tab 保存自己的 transient filters/display；保存的 view.config 从不被自动修改。
+  const [tabs, setTabs] = useState<Record<string, ProjectViewSnapshot>>({})
+  // 保存基底缓存与 URL 临时层的更新并非原子操作；提交期间固定取数快照，直到两层完成交接。
+  const [absorbing, setAbsorbing] = useState<{
+    viewId: string
+    filters: FilterCond[]
+    settled: boolean
+  } | null>(null)
+  const display = tabs[tabKey]?.display ?? saved.display
+  const viewReady = !activeViewId || !!activeView
+  const [openPanel, setOpenPanel] = useState<ViewPanel | null>(null)
+  const panelControl = (id: ViewPanel) => ({
+    open: openPanel === id,
+    onOpenChange: (open: boolean) => setOpenPanel((current) =>
+      open ? id : current === id ? null : current),
+  })
+  // 防止请求完成时把用户拉回已经离开的编辑会话。
+  const transition = useRef(0)
+  const selectedTab = useRef(tabKey)
+  useEffect(() => {
+    if (selectedTab.current === tabKey) return
+    selectedTab.current = tabKey
+    transition.current++
+    setDraft(null)
+    setOpenPanel(null)
+    setViewError(null)
+  }, [tabKey])
+  useEffect(() => {
+    if (!viewReady) return
+    setTabs((old) => old[tabKey]?.filters === conds && old[tabKey]?.display === display
+      ? old : { ...old, [tabKey]: { filters: conds, display } })
+  }, [tabKey, conds, display, viewReady])
+
+  useEffect(() => {
+    if (absorbing?.settled && (activeViewId !== absorbing.viewId || conds.length === 0)) {
+      setAbsorbing(null)
+    }
+  }, [absorbing, activeViewId, conds])
+  const browseFilters = useMemo(() =>
+    absorbing?.viewId === activeViewId ? absorbing.filters : [...saved.filters, ...conds],
+  [absorbing, activeViewId, saved.filters, conds])
+  const effectiveConds = draft?.filters ?? browseFilters
+  const editableConds = draft?.filters ?? conds
+  const effectiveDisplay = draft?.display ?? display
+  const fParams = useMemo(() => encodeConds(effectiveConds), [effectiveConds])
+  const { data: projects, isLoading, isError, error } = useProjects(workspaceId, fParams, viewReady)
+  const resetTarget = draft?.baseline ?? saved.display
+  const displayChanged = !isSameDisplay(display, saved.display)
+  const deviatedViewIds = useMemo(() => new Set((views ?? []).filter((view) => {
+    const state = view.id === activeViewId ? { filters: conds, display } : tabs[view.id]
+    return state && (state.filters.length > 0 ||
+      !isSameDisplay(state.display, decodeProjectConfig(view.config).display))
+  }).map((view) => view.id)), [views, activeViewId, tabs, conds, display])
+
+  const writeLocation = (id: string | null, filters: FilterCond[], replace = true) => {
+    const sp = new URLSearchParams(searchParams)
+    if (id) sp.set("view", id)
+    else sp.delete("view")
+    writeConds(sp, filters)
+    setSearchParams(sp, { replace })
+  }
+  const setConds = (filters: FilterCond[]) => {
+    setTabs((old) => ({ ...old, [tabKey]: { filters, display } }))
+    writeLocation(activeViewId, filters)
+  }
+  const setEffectiveConds = (filters: FilterCond[]) => {
+    if (busy) return
+    if (draft) setDraft({ ...draft, filters })
+    else setConds(filters)
+  }
+  const setEffectiveDisplay = (next: ProjectDisplayState) => {
+    if (busy) return
+    if (draft) setDraft({ ...draft, display: next })
+    else setTabs((old) => ({ ...old, [tabKey]: { filters: conds, display: next } }))
+  }
+  const cancelEdit = () => {
+    transition.current++
+    setDraft(null)
+    setOpenPanel(null)
+    setViewError(null)
+  }
+  const activateTab = (id: string | null) => {
+    cancelEdit()
+    const key = id ?? PRESET_TAB
+    selectedTab.current = key
+    const filters = key === tabKey ? conds : tabs[key]?.filters ?? EMPTY_FILTERS
+    writeLocation(id, filters, false)
+  }
+  const activatePreset = () => activateTab(null)
+  const activateView = (id: string) => activateTab(id)
+  const startNewView = (fromCurrent = false) => {
+    if (busy || !viewQuery.isSuccess || !viewReady) return
+    cancelEdit()
+    const snapshot = decodeProjectConfig(encodeProjectConfig(fromCurrent ? browseFilters : [], display))
+    setDraft({ mode: "new", name: "", description: "", ...snapshot,
+      baseline: DEFAULT_DISPLAY, resumeFilters: [] })
+  }
+  const editView = (id: string) => {
+    const view = views?.find((v) => v.id === id)
+    if (!view || busy) return
+    const resumeFilters = id === activeViewId ? conds : tabs[id]?.filters ?? EMPTY_FILTERS
+    activateTab(id)
+    const snapshot = decodeProjectConfig(view.config)
+    setDraft({ mode: "edit", viewId: id, name: view.name, description: view.description,
+      ...snapshot, baseline: snapshot.display, resumeFilters })
+  }
+  const resetView = () => {
+    if (busy) return
+    setTabs((old) => ({ ...old, [tabKey]: { filters: [], display: saved.display } }))
+    writeLocation(activeViewId, [])
+    setOpenPanel(null)
+  }
+  const resetDraft = () => {
+    const view = views?.find((v) => v.id === draft?.viewId)
+    if (!draft || !view || busy) return
+    const snapshot = decodeProjectConfig(view.config)
+    setDraft({ ...draft, name: view.name, description: view.description, ...snapshot, baseline: snapshot.display })
+    setOpenPanel(null)
+  }
+  const saveDraft = () => {
+    if (!draft || !draft.name.trim() || busy) return
+    const version = transition.current
+    const submitted = draft
+    setOpenPanel(null)
+    setViewError(null)
+    const input = { name: draft.name.trim(), description: draft.description.trim(),
+      config: encodeProjectConfig(draft.filters, draft.display) }
+    const onSuccess = (view: View) => {
+      const next = { filters: submitted.resumeFilters, display: decodeProjectConfig(view.config).display }
+      setTabs((old) => ({ ...old, [view.id]: next }))
+      if (transition.current !== version) return
+      cancelEdit()
+      selectedTab.current = view.id
+      writeLocation(view.id, next.filters)
+    }
+    const onError = (err: unknown) => {
+      if (transition.current === version) setViewError(displayError(t, err, "common.saveFailed"))
+    }
+    if (draft.mode === "edit" && draft.viewId) {
+      updateView.mutate({ viewId: draft.viewId, input }, { onSuccess, onError })
+    } else {
+      createView.mutate({ ...input, surface: "projects_page", entityType: "project" }, { onSuccess, onError })
+    }
+  }
+  const saveToThisView = () => {
+    if (!activeView || busy) return
+    const id = activeView.id
+    const version = transition.current
+    setOpenPanel(null)
+    setViewError(null)
+    setAbsorbing({ viewId: id, filters: browseFilters, settled: false })
+    updateView.mutate({ viewId: id, input: { config: encodeProjectConfig(browseFilters, display) } }, {
+      onSuccess: (view) => {
+        // 已吸收的临时条件转入保存基底，必须清空临时层，防止重复 AND。
+        setTabs((old) => ({ ...old, [id]: { filters: [], display: decodeProjectConfig(view.config).display } }))
+        if (selectedTab.current === id) writeLocation(id, [])
+        setAbsorbing((current) => current?.viewId === id ? { ...current, settled: true } : current)
+      },
+      onError: (err) => {
+        setAbsorbing(null)
+        if (transition.current === version) setViewError(displayError(t, err, "common.saveFailed"))
+      },
+    })
+  }
+  const requestDeleteView = (id: string) => {
+    if (busy) return
+    setOpenPanel(null)
+    setViewError(null)
+    setDeleting(views?.find((v) => v.id === id) ?? null)
+  }
+  const confirmDeleteView = () => {
+    if (!deleting || busy) return
+    const id = deleting.id
+    deleteView.mutate(id, {
+      onSuccess: () => {
+        setDeleting(null)
+        setTabs((old) => { const next = { ...old }; delete next[id]; return next })
+        if (selectedTab.current === id) activatePreset()
+      },
+      onError: (err) => {
+        setDeleting(null)
+        setViewError(displayError(t, err, "view.deleteFailed"))
+      },
+    })
+  }
 
   // 列配置单源：可见列 → 网格模板 / 保底宽（inline style，Tailwind JIT 编译不到动态 arbitrary class）
-  const cols = useMemo(() => visibleColumns(display), [display])
+  const cols = useMemo(() => visibleColumns(effectiveDisplay), [effectiveDisplay])
   const gridStyle = useMemo<CSSProperties>(
     () => ({ gridTemplateColumns: gridTemplateCols(cols) }),
     [cols],
@@ -81,32 +302,40 @@ export function ProjectListPage() {
     [cols],
   )
 
-  const { ready, ctx, meta } = useGroupValueMeta(workspaceId!, display)
+  const { ready, ctx, meta } = useGroupValueMeta(workspaceId!, effectiveDisplay)
   // 基底管线：showClosed（基底 AND：filter 取回但关闭态前端隐藏）→ ordering → 分组
   const baseRows = useMemo(
-    () => applyShowClosed(projects ?? [], display.showClosed),
-    [projects, display.showClosed],
+    () => applyShowClosed(projects ?? [], effectiveDisplay.showClosed),
+    [projects, effectiveDisplay.showClosed],
   )
   const orderedRows = useMemo(
-    () => sortRows(baseRows, display.orderField, display.orderDir),
-    [baseRows, display.orderField, display.orderDir],
+    () => sortRows(baseRows, effectiveDisplay.orderField, effectiveDisplay.orderDir),
+    [baseRows, effectiveDisplay.orderField, effectiveDisplay.orderDir],
   )
   const groups = useMemo(
-    () => (display.grouping !== "none" && ready ? buildGroups(orderedRows, display, ctx) : []),
-    [orderedRows, display, ctx, ready],
+    () =>
+      effectiveDisplay.grouping !== "none" && ready
+        ? buildGroups(orderedRows, effectiveDisplay, ctx)
+        : [],
+    [orderedRows, effectiveDisplay, ctx, ready],
   )
 
   // 表头排序联动（用户定案 6）：点列头 = 写 ordering 状态；同列翻方向，新列复位 asc + 自动勾选对应列
   const toggleOrder = (field: OrderField) => {
-    if (display.orderField === field) {
-      setDisplay({ ...display, orderDir: display.orderDir === "asc" ? "desc" : "asc" })
+    if (effectiveDisplay.orderField === field) {
+      setEffectiveDisplay({
+        ...effectiveDisplay,
+        orderDir: effectiveDisplay.orderDir === "asc" ? "desc" : "asc",
+      })
     } else {
       const col = orderFieldColumn(field)
-      setDisplay({
-        ...display,
+      setEffectiveDisplay({
+        ...effectiveDisplay,
         orderField: field,
         orderDir: "asc",
-        ...(col && !display.visible[col] ? { visible: { ...display.visible, [col]: true } } : {}),
+        ...(col && !effectiveDisplay.visible[col]
+          ? { visible: { ...effectiveDisplay.visible, [col]: true } }
+          : {}),
       })
     }
   }
@@ -135,7 +364,7 @@ export function ProjectListPage() {
         </span>
       )
     }
-    const active = display.orderField === c.orderField
+    const active = effectiveDisplay.orderField === c.orderField
     return (
       <button
         key={c.key}
@@ -148,7 +377,7 @@ export function ProjectListPage() {
       >
         {label}
         {active &&
-          (display.orderDir === "asc" ? (
+          (effectiveDisplay.orderDir === "asc" ? (
             <ArrowUp className="size-3" />
           ) : (
             <ArrowDown className="size-3" />
@@ -170,16 +399,40 @@ export function ProjectListPage() {
             ]}
           />
         }
-        tabs={<span className={tabPill(true)}>{t("project.allProjects")}</span>}
+        tabs={
+          <ViewTabs
+            workspaceId={workspaceId}
+            busy={busy || !viewQuery.isSuccess || !viewReady}
+            onEditView={editView}
+            onDeleteView={requestDeleteView}
+            presetLabel={t("project.allProjects")}
+            views={views ?? []}
+            activeViewId={activeViewId}
+            editing={draft ? { mode: draft.mode, viewId: draft.viewId, name: draft.name } : null}
+            deviatedViewIds={deviatedViewIds}
+            onSelectPreset={activatePreset}
+            onSelectView={activateView}
+            onNewView={() => startNewView()}
+          />
+        }
         actions={
           <>
+            <fieldset disabled={busy || !viewReady} className="flex items-center gap-1">
             <FilterButton
-              workspaceId={workspaceId!}
+              {...panelControl("top-filter")}
+              showIndicator={false}
+              workspaceId={workspaceId}
               surface="projects_page"
-              conds={conds}
-              onChange={setConds}
+              conds={editableConds}
+              onChange={setEffectiveConds}
             />
-            <DisplayButton state={display} onChange={setDisplay} />
+            <DisplayButton
+              {...panelControl("top-display")}
+              state={effectiveDisplay}
+              onChange={setEffectiveDisplay}
+              resetTarget={resetTarget}
+            />
+            </fieldset>
             <Button variant="ghost" size="sm" onClick={() => openCreate()}>
               <Plus />
               {t("project.newProject")}
@@ -188,17 +441,62 @@ export function ProjectListPage() {
         }
       />
 
-      {/* 条件 chip 行（tab 行与表头之间）：仅存在条件时渲染 */}
-      {conds.length > 0 && (
-        <FilterChipRow
+      {/* 编辑期 = 行内编辑 panel（沙箱：顶部 chip 行隐藏，chip 只落 panel）；
+          非编辑期 = 条件 chip 行（仅存在条件时渲染，view 激活时 Save 升级分裂下拉，§1.9） */}
+      {viewError && <p role="alert" className="mx-6 mb-2 text-sm text-destructive">{viewError}</p>}
+      {viewQuery.isError && (
+        <p role="alert" className="mx-6 mb-2 text-sm text-destructive">
+          {displayError(t, viewQuery.error, "errors.loadFailed")}
+        </p>
+      )}
+      {!viewReady && viewQuery.isSuccess && (
+        <p role="alert" className="mx-6 mb-2 text-sm text-destructive">{t("view.notFound")}</p>
+      )}
+      {!viewReady && viewQuery.isPending && (
+        <p className="mx-6 mb-2 text-sm text-muted-foreground">{t("common.loading")}</p>
+      )}
+      {draft ? (
+        <ViewEditPanel
+          mode={draft.mode}
+          name={draft.name}
+          description={draft.description}
           workspaceId={workspaceId!}
           surface="projects_page"
-          conds={conds}
-          onChange={setConds}
+          filters={draft.filters}
+          display={draft.display}
+          resetTarget={resetTarget}
+          saving={busy}
+          filterControl={panelControl("draft-filter")}
+          displayControl={panelControl("draft-display")}
+          onNameChange={(v) => setDraft({ ...draft, name: v })}
+          onDescriptionChange={(v) => setDraft({ ...draft, description: v })}
+          onFiltersChange={setEffectiveConds}
+          onDisplayChange={setEffectiveDisplay}
+          onReset={draft.mode === "edit" ? resetDraft : undefined}
+          onDelete={draft.viewId ? () => requestDeleteView(draft.viewId!) : undefined}
+          onSave={saveDraft}
+          onCancel={cancelEdit}
         />
+      ) : (
+        viewReady && (conds.length > 0 || displayChanged) && (
+          <FilterChipRow
+            workspaceId={workspaceId}
+            surface="projects_page"
+            conds={conds}
+            onChange={setEffectiveConds}
+            activeView={activeView}
+            disabled={busy}
+            label={t("view.temporaryChanges")}
+            emptyHint={displayChanged ? t("view.displayModified") : undefined}
+            filterControl={panelControl("chips-filter")}
+            onReset={resetView}
+            onSaveToView={activeView ? saveToThisView : undefined}
+            onCreateNewView={() => startNewView(true)}
+          />
+        )
       )}
 
-      <div className="flex-1 min-h-0 px-6">
+      <div className="flex-1 min-h-0 px-6" hidden={!viewReady}>
         {/* 横向滚动容器 = 撑满到视口底的 h-full 层：列溢出时横向滚动条贴在右侧内容区（视口）
             底部而非表格底部（对齐 Linear）；min-w 撑开 grid 防 Name 列被压成 0 宽，pb-6 留底部呼吸 */}
         <div className="h-full overflow-auto">
@@ -212,12 +510,12 @@ export function ProjectListPage() {
                 onClick={() => toggleOrder("name")}
                 className={cn(
                   "flex items-center gap-1 text-left transition-colors hover:text-foreground",
-                  display.orderField === "name" && "text-foreground",
+                  effectiveDisplay.orderField === "name" && "text-foreground",
                 )}
               >
                 {t("common.name")}
-                {display.orderField === "name" &&
-                  (display.orderDir === "asc" ? (
+                {effectiveDisplay.orderField === "name" &&
+                  (effectiveDisplay.orderDir === "asc" ? (
                     <ArrowUp className="size-3" />
                   ) : (
                     <ArrowDown className="size-3" />
@@ -236,7 +534,7 @@ export function ProjectListPage() {
             )}
             {!isLoading && !isError && projects?.length === 0 && (
               <p className="py-4 text-sm text-muted-foreground">
-                {conds.length > 0 ? t("filter.emptyResult") : t("project.empty")}
+                {effectiveConds.length > 0 ? t("filter.emptyResult") : t("project.empty")}
               </p>
             )}
             {/* 取回有行但基底作用域清空（关闭态全隐藏）：专属空态提示 */}
@@ -247,7 +545,7 @@ export function ProjectListPage() {
             {!isLoading &&
               !isError &&
               baseRows.length > 0 &&
-              (display.grouping === "none" ? (
+              (effectiveDisplay.grouping === "none" ? (
                 renderRows(orderedRows, 0)
               ) : ready ? (
                 <ProjectGroupTree
@@ -263,6 +561,16 @@ export function ProjectListPage() {
         </div>
       </div>
 
+      <ConfirmDialog
+        open={deleting !== null}
+        title={t("view.deleteTitle", { name: deleting?.name ?? "" })}
+        description={t("view.deleteDescription")}
+        confirmText={t("view.delete")}
+        destructive
+        pending={deleteView.isPending}
+        onConfirm={confirmDeleteView}
+        onClose={() => { if (!deleteView.isPending) setDeleting(null) }}
+      />
       <CreateProjectDialog
         open={createOpen}
         workspaceId={workspaceId!}

@@ -80,21 +80,27 @@ export const DEFAULT_DISPLAY: ProjectDisplayState = {
   },
 }
 
-/** 非默认态判定（display 按钮蓝点）；orderDir 在 manual 下无意义，回 manual 时由 setter 复位 asc */
-export function isDefaultDisplay(s: ProjectDisplayState): boolean {
+/** 两个 display 状态是否等价（Reset 行显隐 / view 偏离判定复用，P2.md §1.9）；
+ *  orderDir 在 manual 下无意义，但仍逐键比较（manual 下 setter 复位 asc，不影响等价性） */
+export function isSameDisplay(a: ProjectDisplayState, b: ProjectDisplayState): boolean {
   if (
-    s.grouping !== DEFAULT_DISPLAY.grouping ||
-    s.subGrouping !== DEFAULT_DISPLAY.subGrouping ||
-    s.timeframe !== DEFAULT_DISPLAY.timeframe ||
-    s.orderField !== DEFAULT_DISPLAY.orderField ||
-    s.orderDir !== DEFAULT_DISPLAY.orderDir ||
-    s.showClosed !== DEFAULT_DISPLAY.showClosed ||
-    s.showEmptyGroups !== DEFAULT_DISPLAY.showEmptyGroups
+    a.grouping !== b.grouping ||
+    a.subGrouping !== b.subGrouping ||
+    a.timeframe !== b.timeframe ||
+    a.orderField !== b.orderField ||
+    a.orderDir !== b.orderDir ||
+    a.showClosed !== b.showClosed ||
+    a.showEmptyGroups !== b.showEmptyGroups
   )
     return false
   return (Object.keys(DEFAULT_DISPLAY.visible) as ProjectColumn[]).every(
-    (k) => s.visible[k] === DEFAULT_DISPLAY.visible[k],
+    (k) => a.visible[k] === b.visible[k],
   )
+}
+
+/** 非默认态判定（display 按钮蓝点）= 与全局默认 DEFAULT_DISPLAY 的等价比较 */
+export function isDefaultDisplay(s: ProjectDisplayState): boolean {
+  return isSameDisplay(s, DEFAULT_DISPLAY)
 }
 
 /** 分组菜单顺序（Linear 同位：No grouping / Lead / Member / Status / Priority / Label / Start / Target） */

@@ -15,7 +15,7 @@ import {
   ORDER_FIELDS,
   TIMEFRAMES,
   groupFieldLabelKey,
-  isDefaultDisplay,
+  isSameDisplay,
   needsTimeframe,
   orderFieldColumn,
   orderFieldLabelKey,
@@ -36,12 +36,25 @@ const PANEL_W = 320
 interface DisplayButtonProps {
   state: ProjectDisplayState
   onChange: (next: ProjectDisplayState) => void
+  /** Reset 目标（P2.md §1.9 三档）：预设 tab = DEFAULT_DISPLAY（缺席默认）；
+   *  view tab = 该 view 的 config.display；编辑期 = 进入编辑时基线 */
+  resetTarget?: ProjectDisplayState
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
 /** 页头 display 按钮：Linear 圆形风格，非默认态亮蓝点（同 filter 按钮约定） */
-export function DisplayButton({ state, onChange }: DisplayButtonProps) {
+export function DisplayButton({
+  state,
+  onChange,
+  resetTarget,
+  open: controlledOpen,
+  onOpenChange,
+}: DisplayButtonProps) {
   const { t } = useTranslation()
-  const { open, setOpen, ref, panelRef } = usePopover()
+  const { open, setOpen, ref, panelRef } = usePopover({ open: controlledOpen, onOpenChange })
+  const resetBase = resetTarget ?? DEFAULT_DISPLAY
+  const isModified = !isSameDisplay(state, resetBase)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [style, setStyle] = useState<CSSProperties | null>(null)
   useLayoutEffect(() => {
@@ -72,7 +85,7 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
       <RoundIconButton
         ref={triggerRef}
         label={t("display.button")}
-        active={!isDefaultDisplay(state)}
+        active={isModified}
         onClick={() => setOpen(!open)}
       >
         <SlidersHorizontal className="size-4" />
@@ -190,8 +203,8 @@ export function DisplayButton({ state, onChange }: DisplayButtonProps) {
               ))}
             </div>
 
-            {/* 面板底部 Reset：仅非默认态渲染（用户定案 2026-09 任务切片，两侧面板统一） */}
-            {!isDefaultDisplay(state) && <ResetRow onReset={() => onChange(DEFAULT_DISPLAY)} />}
+            {/* 面板底部 Reset：仅非 resetTarget 态渲染（三档目标由页面侧传入，P2.md §1.9；两侧面板统一） */}
+            {isModified && <ResetRow onReset={() => onChange(resetBase)} />}
           </div>,
           document.body,
         )}

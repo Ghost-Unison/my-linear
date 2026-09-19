@@ -5,7 +5,8 @@
 import { useState } from "react"
 import { createPortal } from "react-dom"
 import { useTranslation } from "react-i18next"
-import { Check, Plus, X } from "lucide-react"
+import { Check, ChevronDown, Plus, X } from "lucide-react"
+import type { View } from "@/api/types"
 import {
   NONE,
   OVERDUE,
@@ -21,7 +22,14 @@ import {
 import { cn } from "@/lib/utils"
 import { usePopover } from "@/components/ui/popover"
 import { useFixedPanelStyle } from "@/components/ui/select"
-import { FilterDropdown } from "./filter-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { FilterDropdown, type FilterMenuControl } from "./filter-menu"
 import { LadderEditList, OPTION, PANEL, ValueCheckList, useValueLabel } from "./filter-options"
 
 interface ChipRowProps {
@@ -31,14 +39,42 @@ interface ChipRowProps {
   onChange: (next: FilterCond[]) => void
   /** 已处于 px-6 内容区（项目详情 Issues tab）时去掉 mx-6，避免双重内边距 */
   bare?: boolean
+  /** view 激活时 Save 升级为分裂下拉（P2.md §1.9） */
+  activeView?: View | null
+  /** Save to this view = PATCH config ← currentState */
+  onSaveToView?: () => void
+  /** Create new view... = 开新建 panel（无 activeView 时 Save 直接走此路径）；
+   *  与 activeView 皆缺 = Save 禁用（未接 view 的面保持现状） */
+  onCreateNewView?: () => void
+  onReset?: () => void
+  filterControl?: FilterMenuControl
+  disabled?: boolean
+  label?: string
+  emptyHint?: string
 }
 
-export function FilterChipRow({ workspaceId, surface, conds, onChange, bare }: ChipRowProps) {
+export function FilterChipRow({
+  workspaceId,
+  surface,
+  conds,
+  onChange,
+  bare,
+  activeView,
+  onSaveToView,
+  onCreateNewView,
+  onReset,
+  filterControl,
+  disabled,
+  label,
+  emptyHint,
+}: ChipRowProps) {
   const { t } = useTranslation()
   return (
     // 灰底面板区分页头按钮区与下方列表区（Linear 实测）；chips 左侧换行、Clear/Save 右侧
-    <div className={cn("mb-2 flex items-center gap-3 rounded-md bg-surface-1 px-3 py-2", !bare && "mx-6")}>
-      <div className="flex flex-1 flex-wrap items-center gap-1.5">
+    <fieldset disabled={disabled} aria-label={label} className={cn("mb-2 flex min-w-0 items-center gap-3 rounded-md bg-surface-1 px-3 py-2 disabled:opacity-60", !bare && "mx-6")}>
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+        {label && <span className="mr-1 text-xs text-muted-foreground">{label}</span>}
+        {conds.length === 0 && emptyHint && <span className="text-xs text-muted-foreground">{emptyHint}</span>}
         {conds.map((c, i) => (
           <FilterChip
             key={`${c.field}.${c.op}.${i}`}
@@ -51,6 +87,7 @@ export function FilterChipRow({ workspaceId, surface, conds, onChange, bare }: C
           />
         ))}
         <FilterDropdown
+          {...filterControl}
           workspaceId={workspaceId}
           surface={surface}
           conds={conds}
@@ -68,28 +105,30 @@ export function FilterChipRow({ workspaceId, surface, conds, onChange, bare }: C
         />
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={() => onChange([])}
-          className="text-xs text-muted-foreground transition-colors hover:text-foreground"
-        >
-          {t("filter.clear")}
-        </button>
-        {/* Save 预留：视图持久化切片（C）接通前禁用 */}
-        <button
-          type="button"
-          disabled
-          title={t("common.save")}
-          className="cursor-not-allowed rounded border border-border px-2.5 py-1 text-xs text-muted-foreground opacity-60"
-        >
-          {t("common.save")}
-        </button>
+        {conds.length > 0 && (
+          <button type="button" onClick={() => onChange([])}
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+            {t("filter.clear")}
+          </button>
+        )}
+        {onReset && (
+          <button type="button" onClick={onReset}
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground">
+            {t("display.reset")}
+          </button>
+        )}
+        <SaveButton
+          activeView={activeView}
+          onSaveToView={onSaveToView}
+          onCreateNewView={onCreateNewView}
+          disabled={disabled}
+        />
       </div>
-    </div>
+    </fieldset>
   )
 }
 
-function FilterChip({
+export function FilterChip({
   workspaceId,
   surface,
   cond,
@@ -190,5 +229,61 @@ function FilterChip({
           document.body,
         )}
     </div>
+  )
+}
+
+const SAVE_BTN =
+  "inline-flex items-center gap-1 rounded border border-border px-2.5 py-1 text-xs text-foreground transition-colors hover:bg-accent"
+
+/** Save 按钮（P2.md §1.9）：view 激活 = 分裂下拉（Save to this view / Create new view...）；
+ *  无 activeView 但提供 onCreateNewView = 直接开新建 panel；两者皆缺 = 禁用（未接 view 的面保持现状） */
+function SaveButton({
+  activeView,
+  onSaveToView,
+  onCreateNewView,
+  disabled,
+}: {
+  activeView?: View | null
+  onSaveToView?: () => void
+  onCreateNewView?: () => void
+  disabled?: boolean
+}) {
+  const { t } = useTranslation()
+  if (activeView && onSaveToView && onCreateNewView) {
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger disabled={disabled} className={SAVE_BTN}>
+          {t("common.save")}
+          <ChevronDown className="size-3" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuGroup>
+          <DropdownMenuItem disabled={disabled} className="text-xs" onSelect={onSaveToView}>
+            {t("view.saveToThisView")}
+          </DropdownMenuItem>
+          <DropdownMenuItem disabled={disabled} className="text-xs" onSelect={onCreateNewView}>
+            {t("view.createNewView")}
+          </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    )
+  }
+  if (onCreateNewView) {
+    return (
+      <button type="button" disabled={disabled} onClick={onCreateNewView} className={SAVE_BTN}>
+        {t("common.save")}
+      </button>
+    )
+  }
+  return (
+    <button
+      type="button"
+      disabled
+      title={t("common.save")}
+      className="cursor-not-allowed rounded border border-border px-2.5 py-1 text-xs text-muted-foreground opacity-60"
+    >
+      {t("common.save")}
+    </button>
   )
 }

@@ -79,7 +79,12 @@ function SubGuard({ children }: { children: ReactNode }) {
   )
 }
 
-interface FilterSurfaceProps {
+export interface FilterMenuControl {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}
+
+interface FilterSurfaceProps extends FilterMenuControl {
   workspaceId: string
   surface: Surface
   conds: FilterCond[]
@@ -87,13 +92,13 @@ interface FilterSurfaceProps {
 }
 
 /** 页头 filter 按钮：Linear 圆形风格，非默认态（存在条件）亮蓝点 */
-export function FilterButton(props: FilterSurfaceProps) {
+export function FilterButton({ showIndicator = true, ...props }: FilterSurfaceProps & { showIndicator?: boolean }) {
   const { t } = useTranslation()
   return (
     <FilterDropdown
       {...props}
       trigger={
-        <RoundIconButton label={t("filter.button")} active={props.conds.length > 0}>
+        <RoundIconButton label={t("filter.button")} active={showIndicator && props.conds.length > 0}>
           <ListFilter className="size-4" />
         </RoundIconButton>
       }
@@ -109,10 +114,17 @@ export function FilterDropdown({
   conds,
   onChange,
   trigger,
+  open: controlledOpen,
+  onOpenChange,
 }: FilterSurfaceProps & { trigger: ReactNode }) {
   const { t } = useTranslation()
   // 根菜单受控：值行「其余区」点击要能直接关闭整个菜单（Linear 规格），故持有 open
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(next)
+    onOpenChange?.(next)
+  }
   const close = () => setOpen(false)
   // 打开菜单即预取本面值集（members/labels/projects），悬浮任一属性打开面板秒开、零 loading；
   // staleTime: Infinity 命中缓存，二次打开不再重复 GET（划过未选中属性也不各自发请求）
@@ -124,7 +136,7 @@ export function FilterDropdown({
   const plain = specs.filter((s) => s.kind === "single" || s.kind === "multi")
   const dates = specs.filter((s) => s.kind === "day" || s.kind === "moment")
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
+    <DropdownMenu open={open} onOpenChange={setOpen} modal={controlledOpen === undefined}>
       <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuGroup>

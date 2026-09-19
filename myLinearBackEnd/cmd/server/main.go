@@ -37,6 +37,7 @@ func main() {
 			"project_status", "_project_status",
 			"label_scope", "_label_scope",
 			"view_entity", "_view_entity",
+			"view_surface", "_view_surface",
 		})
 		if err != nil {
 			return fmt.Errorf("load enum types: %w", err)

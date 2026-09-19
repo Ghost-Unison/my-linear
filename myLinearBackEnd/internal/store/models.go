@@ -264,6 +264,70 @@ func AllViewEntityValues() []ViewEntity {
 	}
 }
 
+type ViewSurface string
+
+const (
+	ViewSurfaceTasksPage     ViewSurface = "tasks_page"
+	ViewSurfaceProjectsPage  ViewSurface = "projects_page"
+	ViewSurfaceViewsPage     ViewSurface = "views_page"
+	ViewSurfaceProjectIssues ViewSurface = "project_issues"
+)
+
+func (e *ViewSurface) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = ViewSurface(s)
+	case string:
+		*e = ViewSurface(s)
+	default:
+		return fmt.Errorf("unsupported scan type for ViewSurface: %T", src)
+	}
+	return nil
+}
+
+type NullViewSurface struct {
+	ViewSurface ViewSurface `json:"view_surface"`
+	Valid       bool        `json:"valid"` // Valid is true if ViewSurface is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullViewSurface) Scan(value interface{}) error {
+	if value == nil {
+		ns.ViewSurface, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.ViewSurface.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullViewSurface) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.ViewSurface), nil
+}
+
+func (e ViewSurface) Valid() bool {
+	switch e {
+	case ViewSurfaceTasksPage,
+		ViewSurfaceProjectsPage,
+		ViewSurfaceViewsPage,
+		ViewSurfaceProjectIssues:
+		return true
+	}
+	return false
+}
+
+func AllViewSurfaceValues() []ViewSurface {
+	return []ViewSurface{
+		ViewSurfaceTasksPage,
+		ViewSurfaceProjectsPage,
+		ViewSurfaceViewsPage,
+		ViewSurfaceProjectIssues,
+	}
+}
+
 type Label struct {
 	ID          uuid.UUID  `json:"id"`
 	WorkspaceID uuid.UUID  `json:"workspace_id"`
@@ -320,6 +384,8 @@ type SavedView struct {
 	Config      json.RawMessage `json:"config"`
 	CreatedAt   time.Time       `json:"created_at"`
 	UpdatedAt   time.Time       `json:"updated_at"`
+	Surface     ViewSurface     `json:"surface"`
+	ProjectID   *uuid.UUID      `json:"project_id"`
 }
 
 type Task struct {

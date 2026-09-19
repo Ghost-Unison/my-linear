@@ -1,7 +1,7 @@
 # myLinear API 契约
 
 > **文档性质**：单一活文档，随开发阶段持续更新。每个接口标注引入阶段（`P0` / `P1` / `P2`）。
-> **上游依据**：[DATABASE_DESIGN.md](../DATABASE_DESIGN.md)（v1.3）、[docs/product-design/P0.md](./product-design/P0.md)、[docs/product-design/P1.md](./product-design/P1.md)。
+> **上游依据**：[DATABASE_DESIGN.md](../DATABASE_DESIGN.md)（v1.4）、[docs/product-design/P0.md](./product-design/P0.md)、[docs/product-design/P1.md](./product-design/P1.md)。
 > **实现链**：本文档 → `db/queries/*.sql`（sqlc）→ Gin handler（业务规则内化于此，见 §2.1）。每个接口标注对应的 sqlc 查询名。
 
 ---
@@ -468,7 +468,44 @@ POST /tasks 与 POST /projects 请求体新增可选 `labelIds: []`，校验规�
 
 ---
 
-## 10. 后序阶段接口索引
+## 10. View 接口（saved_view CRUD，P2 已实施 2026-09）
 
-- **P2**：saved_view CRUD（`/workspaces/:wid/views`）；列表接口筛选参数扩展（statuses 数组机制照抄扩展 `label_ids` / `assignee_ids` 等，§2.2）；展示选项（分组/排序/展示属性）纯前端无接口（§2.9）
+View 行形状（config 为后端 opaque 透传对象）：
+
+```json
+{ "id": "uuid", "workspaceId": "uuid", "entityType": "task|project",
+  "surface": "tasks_page|projects_page|views_page|project_issues",
+  "projectId": null, "name": "", "description": "",
+  "config": {}, "createdAt": "timestamptz", "updatedAt": "timestamptz" }
+```
+
+### GET /workspaces/:wid/views `P2`
+query：`surface` 必传（四值枚举；缺席或非法 → `400 VALIDATION_FAILED`）；`entityType` 可选（task|project，非法 → 400；views_page 分 tab 用，其余 surface 传则同集过滤）；`projectId`：surface=project_issues 时**必传**（缺席 → 400、非 UUID → 400），其余 surface 传 → 400。
+**200**: `View[]`（created_at 升序；零行 → `[]`）。
+→ sqlc: `ListViewsBySurface` / `ListViewsBySurfaceAndEntityType` / `ListViewsByProject`（枚举参数不可传空串，故拆查询，同 label scope 约定）
+
+### POST /workspaces/:wid/views `P2`
+**请求**: `{ "name": "必填 trim 非空", "description": "可选默认 ''", "surface": "必填", "entityType": "必填", "projectId": "仅 project_issues 面可传", "config": "可选，JSON object，默认 {}" }`。
+surface⇒entityType 一致性与 project_id scope 后端强制（P2.md §4.1）：tasks_page / project_issues ⇒ task；projects_page ⇒ project；views_page 两者皆可；project_issues 的 projectId 必属同 workspace 且未软删（否则 `404 NOT_FOUND`），其余 surface 传 projectId → 400。**不做重名约束**。config 非 object（如数组/标量）→ 400。
+**201**: `View`。
+→ sqlc: `CreateView`（project 归属校验经 `GetProject`）
+
+### GET /workspaces/:wid/views/:viewId `P2`
+**200**: `View`；不存在（含跨 workspace）→ `404 NOT_FOUND`。
+→ sqlc: `GetView`
+
+### PATCH /workspaces/:wid/views/:viewId `P2`
+**请求**: `{ "name"?, "description"?, "config"? }`（presence 三态，§2.4）：缺席 = 不动；name 设置时 trim 非空否则 400；description / config 显式 null → 400（列 NOT NULL / opaque object 不可置空）；config 设置时必须 JSON object。读-改-写（单条写不开事务，§2.4）。**200**: `View`；不存在 → 404。
+→ sqlc: `GetView` + `UpdateView`（全字段覆盖）
+
+### DELETE /workspaces/:wid/views/:viewId `P2`
+硬删除；**204**（幂等，同 label 约定）；workspace 删除时由外键 CASCADE。
+→ sqlc: `DeleteView`
+
+> **config opaque 与 jsonb 归一化**：后端不解释、不校验 config 内容（仅要求 JSON object），原样存、原样返回；jsonb 二进制存储归一化键序/空白/重复键，读回与写入**字节不等价但语义等价**——“原样”指语义原样；前端偏离比对（currentState vs view.config）必须解析后对象深比较，禁字符串比对。
+
+---
+
+## 11. 后序阶段接口索引
+
 - **P3+**：拖拽排序、行内编辑复用 PATCH（无新接口）；标签就地创建复用 POST /labels
