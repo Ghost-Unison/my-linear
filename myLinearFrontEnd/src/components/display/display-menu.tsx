@@ -1,7 +1,7 @@
 // Display options 按钮（页头第二个圆形滑杆按钮）+ popover 面板（P2.md §3 + B 切片修订注）：
 // Grouping / Sub-grouping / Ordering / Timeframe / Show closed projects +
 // List options（Show empty groups 开关 / Display properties 列 chip）+
-// 底部 Reset（回全局默认 DEFAULT_DISPLAY，蓝点熄灭态）。
+// 底部 Reset 还原保存的 Display（预设 tab 回默认）；新建无保存基准，不展示蓝点或 Reset。
 // 纯前端内存状态（总决策 2）：面板操作只写页面 state，不发请求、不进 URL；
 // 展示样式行本切片仅 List（Board/Timeline 后置，用户定案 1）。
 import { useLayoutEffect, useRef, useState, type CSSProperties } from "react"
@@ -36,14 +36,13 @@ const PANEL_W = 320
 interface DisplayButtonProps {
   state: ProjectDisplayState
   onChange: (next: ProjectDisplayState) => void
-  /** Reset 目标（P2.md §1.9 三档）：预设 tab = DEFAULT_DISPLAY（缺席默认）；
-   *  view tab = 该 view 的 config.display；编辑期 = 进入编辑时基线 */
-  resetTarget?: ProjectDisplayState
+  /** 缺席 = 预设默认；View 浏览/编辑 = 保存 display；null = 新建，无蓝点与 Reset。 */
+  resetTarget?: ProjectDisplayState | null
   open?: boolean
   onOpenChange?: (open: boolean) => void
 }
 
-/** 页头 display 按钮：Linear 圆形风格，非默认态亮蓝点（同 filter 按钮约定） */
+/** Display 按钮：当前值偏离保存/默认基准时亮点；新建没有基准，始终不亮点。 */
 export function DisplayButton({
   state,
   onChange,
@@ -53,8 +52,8 @@ export function DisplayButton({
 }: DisplayButtonProps) {
   const { t } = useTranslation()
   const { open, setOpen, ref, panelRef } = usePopover({ open: controlledOpen, onOpenChange })
-  const resetBase = resetTarget ?? DEFAULT_DISPLAY
-  const isModified = !isSameDisplay(state, resetBase)
+  const resetBase = resetTarget === undefined ? DEFAULT_DISPLAY : resetTarget
+  const isModified = resetBase !== null && !isSameDisplay(state, resetBase)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [style, setStyle] = useState<CSSProperties | null>(null)
   useLayoutEffect(() => {
@@ -203,8 +202,8 @@ export function DisplayButton({
               ))}
             </div>
 
-            {/* 面板底部 Reset：仅非 resetTarget 态渲染（三档目标由页面侧传入，P2.md §1.9；两侧面板统一） */}
-            {isModified && <ResetRow onReset={() => onChange(resetBase)} />}
+            {/* Reset 只还原 Display；新建全程隐藏，已有 View 比较并还原保存值（§1.9）。 */}
+            {resetBase && isModified && <ResetRow onReset={() => onChange(resetBase)} />}
           </div>,
           document.body,
         )}

@@ -133,20 +133,18 @@ export function ViewTabs({
           <TempViewTab name={editing.name.trim() || t("view.newViewPlaceholder")} />
         )}
 
-        {/* "+" 新建按钮：编辑期隐藏（已处于编辑会话） */}
-        {editing === null && (
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={onNewView}
-            disabled={busy}
-            title={t("view.newView")}
-            aria-label={t("view.newView")}
-            className="shrink-0 rounded-full"
-          >
-            <Plus />
-          </Button>
-        )}
+        {/* "+" 始终保留；页面侧暂存已有 View 编辑、替换新建草稿，并继承点击前的 Display。 */}
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onNewView}
+          disabled={busy}
+          title={t("view.newView")}
+          aria-label={t("view.newView")}
+          className="shrink-0 rounded-full"
+        >
+          <Plus />
+        </Button>
       </div>
 
       <Dialog open={detailsOpen} onClose={closeDetails} className="max-w-lg">

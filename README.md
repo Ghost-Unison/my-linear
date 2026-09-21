@@ -8,10 +8,11 @@ Linear 风格的个人任务记录系统。MVP 阶段仅支持个人使用、无
 
 | 文档 | 内容 |
 |------|------|
-| [DATABASE_DESIGN.md](./DATABASE_DESIGN.md) | 数据库设计定稿（9 张表 + 4 个枚举 + ER 图 + 级联策略，v1.3） |
+| [DATABASE_DESIGN.md](./DATABASE_DESIGN.md) | 数据库设计定稿（9 张表 + 5 个枚举 + ER 图 + 级联策略，v1.4） |
 | [DESIGN-linear.app.md](./DESIGN-linear.app.md) | Linear 官方视觉设计 token（色彩/字体/间距/组件规格），前端主题基准 |
 | [docs/product-design/P0.md](./docs/product-design/P0.md) | P0 阶段产品模块设计（阶段快照，每阶段一份） |
 | [docs/product-design/P1.md](./docs/product-design/P1.md) | P1 阶段产品模块设计（Label 标签体系） |
+| [docs/product-design/P2.md](./docs/product-design/P2.md) | P2 阶段产品模块设计（视图体系：Filter / Display options / saved_view，当前阶段） |
 | [docs/api.md](./docs/api.md) | API 契约（单一活文档，随阶段更新，接口标注引入阶段） |
 
 ## 技术栈
@@ -72,19 +73,19 @@ npm run dev
 > 定位：参考 Linear 的页面布局与信息架构，但**功能上做最大简化**。
 > 视觉美感与交互动效后续迭代优化，先保证功能闭环、信息层级正确。
 
-模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消，与 saved_view 自定义视图、列表页 filter / display options 按钮一并归入 P2，**P2 为当前阶段**。
+模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消。**[docs/product-design/P2.md](./docs/product-design/P2.md) 为当前阶段**：三面 Filter / Display options 与四面 saved_view 后端接口已完成；projects 列表 View 的添加、编辑、删除及交互细节已定案，本面功能完成。**浏览临时层与编辑草稿隔离、切 tab 暂存/Cancel 丢弃、新建无蓝点/Reset、Reset 还原保存值**的现行规则与验收例子集中在 P2.md **§4.4.1**，不再随 Linear 行为变动自动调整。其余视图接线与全量回归仍待完成，本轮验证范围及已知异常见 P2.md §6 V3。
 
 ## 功能边界（裁剪项与后置项）
 
 裁剪（不做）：登录鉴权（P4 开源化再做）、评论、Activity 动态、附件、通知/Inbox、Cycle/Sprint、Milestone、项目 Progress 图表、Health 状态、任务编号（GHO-13）、工时估算、暗/亮主题切换（先只做暗色）。
 
-后置：自定义视图（saved_view）与列表页 filter / display options 面板（P2）、看板拖拽排序（P3）、列表行内编辑（P3）。（原列 P3 的「标签就地创建」已随 P1 提前实现）
+后置：看板拖拽排序（P3）、列表行内编辑（P3）。（原列 P3 的「标签就地创建」已随 P1 提前实现；自定义视图 saved_view 与列表页 filter / display options 面板为当前 P2 阶段主体，进度见下方路线图与 [docs/product-design/P2.md](./docs/product-design/P2.md)）
 
 ## 开发路线图
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
 - **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）——**已完成**，并提前做完原属 P3 的标签就地创建
-- **P2**（当前阶段）：saved_view 自定义视图、~~列表页 filter 按钮~~（**A/A2 切片已完成：tasks_page / projects_page / project_issues 三面接入，2026-09**）、display options 按钮（分组/排序/展示属性；展示属性为纯前端渲染开关，接口返回完备行）、项目详情页完善
+- **P2**（进行中）：**已完成** tasks_page / projects_page / project_issues 三面 Filter / Display options、四面 saved_view 后端接口，以及 projects 列表 View 添加/编辑/删除与交互定案；**待完成** tasks_page / project_issues 的 View 接线、workspace 级 Views 页与全量回归。已登记异常仍待修，不计为已解决（见 P2.md §6）。
 - **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、交互细节打磨
 - **P4**：开源化（注册登录、多租户、云上部署）
 

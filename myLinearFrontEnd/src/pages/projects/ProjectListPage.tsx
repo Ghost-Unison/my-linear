@@ -12,7 +12,6 @@ import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filt
 import {
   applyShowClosed,
   buildGroups,
-  DEFAULT_DISPLAY,
   gridTemplateCols,
   isSameDisplay,
   orderFieldColumn,
@@ -49,7 +48,7 @@ import {
   useProjectStatusLabel,
 } from "@/components/project/project-status"
 
-/** 编辑沙箱 draft（P2.md §1.9）：非空 = 编辑期，隔离预览；Save 提交 / Cancel 全弃 */
+/** 当前编辑沙箱（P2.md §1.9）：已有 View 草稿按 id 暂存；新建草稿仅随当前 panel 存活。 */
 interface ViewDraft {
   mode: "new" | "edit"
   viewId?: string
@@ -57,13 +56,9 @@ interface ViewDraft {
   description: string
   filters: FilterCond[]
   display: ProjectDisplayState
-  /** 编辑期 Reset 基线（新建 = DEFAULT_DISPLAY / Edit = config.display，§1.9 Reset 三档） */
-  baseline: ProjectDisplayState
-  /** 编辑保存后恢复该 view 的临时条件；新 view 总是从空临时层开始。 */
-  resumeFilters: FilterCond[]
 }
 
-type ViewPanel = "top-filter" | "top-display" | "draft-filter" | "draft-display" | "chips-filter"
+type ViewPanel = "filter" | "display" | "chips-filter"
 const PRESET_TAB = "all"
 const EMPTY_FILTERS: FilterCond[] = []
 
@@ -82,7 +77,13 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
   const [searchParams, setSearchParams] = useSearchParams()
   // 浏览 URL 的 f= 仅承载临时条件；view= 指向保存的基底，取数时才合成 AND。
   const conds = useMemo(() => parseConds(searchParams, "projects_page"), [searchParams])
-  const [draft, setDraft] = useState<ViewDraft | null>(null)
+  const [draft, setActiveDraft] = useState<ViewDraft | null>(null)
+  // 暂存草稿不驱动浏览展示；统一在编辑写入时缓存，切 tab（含历史导航）只关闭 panel。
+  const editDrafts = useRef<Record<string, ViewDraft>>({})
+  const setDraft = (next: ViewDraft) => {
+    if (next.mode === "edit" && next.viewId) editDrafts.current[next.viewId] = next
+    setActiveDraft(next)
+  }
   const { data: workspaces } = useWorkspaces()
   const [createOpen, setCreateOpen] = useState(false)
   // ⑤ 分组头 “+” 预填：undefined = 页头 New project（全默认）
@@ -115,6 +116,7 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
   } | null>(null)
   const display = tabs[tabKey]?.display ?? saved.display
   const viewReady = !activeViewId || !!activeView
+  // 浏览与编辑期仅挂载一组 Filter/Display，共用浮层标识；临时条的添加菜单仍独立互斥。
   const [openPanel, setOpenPanel] = useState<ViewPanel | null>(null)
   const panelControl = (id: ViewPanel) => ({
     open: openPanel === id,
@@ -128,7 +130,7 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     if (selectedTab.current === tabKey) return
     selectedTab.current = tabKey
     transition.current++
-    setDraft(null)
+    setActiveDraft(null)
     setOpenPanel(null)
     setViewError(null)
   }, [tabKey])
@@ -147,11 +149,9 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     absorbing?.viewId === activeViewId ? absorbing.filters : [...saved.filters, ...conds],
   [absorbing, activeViewId, saved.filters, conds])
   const effectiveConds = draft?.filters ?? browseFilters
-  const editableConds = draft?.filters ?? conds
   const effectiveDisplay = draft?.display ?? display
   const fParams = useMemo(() => encodeConds(effectiveConds), [effectiveConds])
   const { data: projects, isLoading, isError, error } = useProjects(workspaceId, fParams, viewReady)
-  const resetTarget = draft?.baseline ?? saved.display
   const displayChanged = !isSameDisplay(display, saved.display)
   const deviatedViewIds = useMemo(() => new Set((views ?? []).filter((view) => {
     const state = view.id === activeViewId ? { filters: conds, display } : tabs[view.id]
@@ -180,14 +180,18 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     if (draft) setDraft({ ...draft, display: next })
     else setTabs((old) => ({ ...old, [tabKey]: { filters: conds, display: next } }))
   }
-  const cancelEdit = () => {
+  const closeEditor = () => {
     transition.current++
-    setDraft(null)
+    setActiveDraft(null)
     setOpenPanel(null)
     setViewError(null)
   }
+  const cancelEdit = () => {
+    if (draft?.viewId) delete editDrafts.current[draft.viewId]
+    closeEditor()
+  }
   const activateTab = (id: string | null) => {
-    cancelEdit()
+    closeEditor()
     const key = id ?? PRESET_TAB
     selectedTab.current = key
     const filters = key === tabKey ? conds : tabs[key]?.filters ?? EMPTY_FILTERS
@@ -197,19 +201,19 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
   const activateView = (id: string) => activateTab(id)
   const startNewView = (fromCurrent = false) => {
     if (busy || !viewQuery.isSuccess || !viewReady) return
-    cancelEdit()
-    const snapshot = decodeProjectConfig(encodeProjectConfig(fromCurrent ? browseFilters : [], display))
-    setDraft({ mode: "new", name: "", description: "", ...snapshot,
-      baseline: DEFAULT_DISPLAY, resumeFilters: [] })
+    // 继承点击前生效的 Display；已有 View 草稿留在缓存，新建草稿可替换，普通 "+" 不带 filters。
+    const snapshot = decodeProjectConfig(encodeProjectConfig(fromCurrent ? browseFilters : [], effectiveDisplay))
+    closeEditor()
+    setDraft({ mode: "new", name: "", description: "", ...snapshot })
   }
   const editView = (id: string) => {
     const view = views?.find((v) => v.id === id)
     if (!view || busy) return
-    const resumeFilters = id === activeViewId ? conds : tabs[id]?.filters ?? EMPTY_FILTERS
     activateTab(id)
-    const snapshot = decodeProjectConfig(view.config)
-    setDraft({ mode: "edit", viewId: id, name: view.name, description: view.description,
-      ...snapshot, baseline: snapshot.display, resumeFilters })
+    setDraft(editDrafts.current[id] ?? {
+      mode: "edit", viewId: id, name: view.name, description: view.description,
+      ...decodeProjectConfig(view.config),
+    })
   }
   const resetView = () => {
     if (busy) return
@@ -221,22 +225,25 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     const view = views?.find((v) => v.id === draft?.viewId)
     if (!draft || !view || busy) return
     const snapshot = decodeProjectConfig(view.config)
-    setDraft({ ...draft, name: view.name, description: view.description, ...snapshot, baseline: snapshot.display })
+    setDraft({ ...draft, name: view.name, description: view.description, ...snapshot })
     setOpenPanel(null)
   }
   const saveDraft = () => {
     if (!draft || !draft.name.trim() || busy) return
     const version = transition.current
-    const submitted = draft
+    // 每次提交读取本次浏览临时层，避免恢复的旧草稿携带过时的浏览条件。
+    const resumeFilters = draft.mode === "edit" ? conds : EMPTY_FILTERS
     setOpenPanel(null)
     setViewError(null)
     const input = { name: draft.name.trim(), description: draft.description.trim(),
       config: encodeProjectConfig(draft.filters, draft.display) }
     const onSuccess = (view: View) => {
-      const next = { filters: submitted.resumeFilters, display: decodeProjectConfig(view.config).display }
+      // 即使提交期间已切 tab，保存成功也要清掉该 View 的暂存草稿。
+      delete editDrafts.current[view.id]
+      const next = { filters: resumeFilters, display: decodeProjectConfig(view.config).display }
       setTabs((old) => ({ ...old, [view.id]: next }))
       if (transition.current !== version) return
-      cancelEdit()
+      closeEditor()
       selectedTab.current = view.id
       writeLocation(view.id, next.filters)
     }
@@ -258,6 +265,7 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     setAbsorbing({ viewId: id, filters: browseFilters, settled: false })
     updateView.mutate({ viewId: id, input: { config: encodeProjectConfig(browseFilters, display) } }, {
       onSuccess: (view) => {
+        delete editDrafts.current[id]
         // 已吸收的临时条件转入保存基底，必须清空临时层，防止重复 AND。
         setTabs((old) => ({ ...old, [id]: { filters: [], display: decodeProjectConfig(view.config).display } }))
         if (selectedTab.current === id) writeLocation(id, [])
@@ -281,6 +289,7 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     deleteView.mutate(id, {
       onSuccess: () => {
         setDeleting(null)
+        delete editDrafts.current[id]
         setTabs((old) => { const next = { ...old }; delete next[id]; return next })
         if (selectedTab.current === id) activatePreset()
       },
@@ -388,8 +397,7 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      {/* 页头（Linear 风格）：面包屑行 → 分割线 → tab 行（All projects + 右上 Display/Filter/New project）。
-          All projects 为选中态胶囊占位（当前只有一个视图，未来筛选 tab 在此扩展） */}
+      {/* 页头：预设/view tab 与 New project 始终保留；新建/编辑视图时 Filter/Display 仅在 panel 中展示。 */}
       <PageHeader
         title={
           <Breadcrumb
@@ -417,22 +425,24 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
         }
         actions={
           <>
-            <fieldset disabled={busy || !viewReady} className="flex items-center gap-1">
-            <FilterButton
-              {...panelControl("top-filter")}
-              showIndicator={false}
-              workspaceId={workspaceId}
-              surface="projects_page"
-              conds={editableConds}
-              onChange={setEffectiveConds}
-            />
-            <DisplayButton
-              {...panelControl("top-display")}
-              state={effectiveDisplay}
-              onChange={setEffectiveDisplay}
-              resetTarget={resetTarget}
-            />
-            </fieldset>
+            {!draft && (
+              <fieldset disabled={busy || !viewReady} className="flex items-center gap-1">
+                <FilterButton
+                  {...panelControl("filter")}
+                  showIndicator={false}
+                  workspaceId={workspaceId}
+                  surface="projects_page"
+                  conds={conds}
+                  onChange={setEffectiveConds}
+                />
+                <DisplayButton
+                  {...panelControl("display")}
+                  state={display}
+                  onChange={setEffectiveDisplay}
+                  resetTarget={saved.display}
+                />
+              </fieldset>
+            )}
             <Button variant="ghost" size="sm" onClick={() => openCreate()}>
               <Plus />
               {t("project.newProject")}
@@ -441,8 +451,8 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
         }
       />
 
-      {/* 编辑期 = 行内编辑 panel（沙箱：顶部 chip 行隐藏，chip 只落 panel）；
-          非编辑期 = 条件 chip 行（仅存在条件时渲染，view 激活时 Save 升级分裂下拉，§1.9） */}
+      {/* 新建/编辑期 = 行内 panel（条件与 Filter/Display 入口只落 panel，预览仅用 draft）；
+          浏览期 = 临时条（有临时条件或 display 改动时渲染，view 激活时 Save 升级分裂下拉，§1.9） */}
       {viewError && <p role="alert" className="mx-6 mb-2 text-sm text-destructive">{viewError}</p>}
       {viewQuery.isError && (
         <p role="alert" className="mx-6 mb-2 text-sm text-destructive">
@@ -464,10 +474,10 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
           surface="projects_page"
           filters={draft.filters}
           display={draft.display}
-          resetTarget={resetTarget}
+          resetTarget={draft.mode === "new" ? null : saved.display}
           saving={busy}
-          filterControl={panelControl("draft-filter")}
-          displayControl={panelControl("draft-display")}
+          filterControl={panelControl("filter")}
+          displayControl={panelControl("display")}
           onNameChange={(v) => setDraft({ ...draft, name: v })}
           onDescriptionChange={(v) => setDraft({ ...draft, description: v })}
           onFiltersChange={setEffectiveConds}

@@ -1,7 +1,7 @@
-// P2 视图持久化前端状态层（P2.md §1.8/§1.9/§4.2）：config 编解码 + 偏离深比较。
-// 三层状态模型 currentState/view/draft 的唯一真相源是 currentState（filters 进 URL、display 纯内存）；
-// view 是服务端某时刻 currentState 的快照（config 深拷贝）；编辑态再叠一层 draft。
-// config 后端 opaque（jsonb 归一化键序/空白，api.md §10 注）：偏离比对必须解析后对象深比较，禁字符串比对。
+// P2 视图持久化前端状态层（P2.md §1.8/§1.9/§4.2）：config 编解码 + display 反序列化容错。
+// 三层状态：saved（服务端 config）/ transient（每 tab 浏览 filters/display，URL f= 仅临时条件）/ draft（每 View 暂存编辑）。
+// 浏览取数 = saved.filters AND transient，编辑预览仅用 draft；两种会话缓存互不覆盖，卸载清空，刷新按保存值/URL 初始化。
+// config 后端 opaque（jsonb 归一化键序/空白，api.md §10 注）：偏离比对必须解析后对象深比较，禁字符串比对（页面侧用 isSameDisplay 完成）。
 //
 // 本文件当前仅覆盖 projects_page 面（V2 首接面）；tasks_page / project_issues 面 display 形状不同，
 // 后续切片按同构模式扩展（decode/encode/isEqual 三件套 per surface）。
@@ -11,7 +11,6 @@ import {
   GROUP_FIELDS,
   ORDER_FIELDS,
   TIMEFRAMES,
-  isSameDisplay,
   type ProjectDisplayState,
 } from "@/lib/display-state"
 import { parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
@@ -66,21 +65,4 @@ export function encodeProjectConfig(
     filters: filters.map((f) => ({ field: f.field, op: f.op, values: [...f.values] })),
     display: { ...display, visible: { ...display.visible } },
   }
-}
-
-/** 偏离深比较（P2.md §1.9 / api.md §10 注）：filters 有序列表逐项 + display 逐键（visible 展开） */
-export function isProjectSnapshotEqual(a: ProjectViewSnapshot, b: ProjectViewSnapshot): boolean {
-  return filtersEqual(a.filters, b.filters) && isSameDisplay(a.display, b.display)
-}
-
-function filtersEqual(a: FilterCond[], b: FilterCond[]): boolean {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].field !== b[i].field || a[i].op !== b[i].op) return false
-    if (a[i].values.length !== b[i].values.length) return false
-    for (let j = 0; j < a[i].values.length; j++) {
-      if (a[i].values[j] !== b[i].values[j]) return false
-    }
-  }
-  return true
 }

@@ -91,7 +91,7 @@ interface FilterSurfaceProps extends FilterMenuControl {
   onChange: (next: FilterCond[]) => void
 }
 
-/** 页头 filter 按钮：Linear 圆形风格，非默认态（存在条件）亮蓝点 */
+/** 页头 filter 按钮：Linear 圆形风格。Filter 是一次性纯添加入口，projects_page 传 showIndicator=false 不亮蓝点；未接 view 的面保持默认亮点。 */
 export function FilterButton({ showIndicator = true, ...props }: FilterSurfaceProps & { showIndicator?: boolean }) {
   const { t } = useTranslation()
   return (

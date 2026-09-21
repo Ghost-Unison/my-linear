@@ -114,7 +114,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 
 2. handler 层**读-改-写**：`GetXxx` 取旧记录 → 仅应用 `Set=true` 的字段（`Valid=false` = 置空）→ 调用全字段覆盖式 `UpdateXxx`。
 3. Update 类 SQL 一律全字段覆盖（可编辑字段全集），sqlc Params 由实体直接填充，不做逐字段 COALESCE。
-4. 显式 `null` 的落库值取决于列可空性：可空列（email / leadId / assigneeId / dueDate / startDate / targetDate / projectId）写 `NULL`；`NOT NULL DEFAULT ''` 列（description / avatarColor）写空串。
+4. 显式 `null` 的落库值取决于列可空性：可空列（email / leadId / assigneeId / dueDate / startDate / targetDate / projectId）写 `NULL`；`NOT NULL DEFAULT ''` 列（description / avatarColor）写空串。**saved_view 例外**：其 description / config 显式 null → `400`（不置空），见 §10。
 
 开发心得（三态与读-改-写的选型依据）：
 
@@ -126,7 +126,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
   - ③ SERIALIZABLE 隔离级别：一方报 `40001 serialization_failure`，必须配重试循环。
 
   注：`UpdateMember` / `UpdateWorkspace` 同为读-改-写但**刻意不开事务**——只有单条写，事务对原子性零收益、对 lost update 亦零收益。原则：事务仅在「多条写」或「校验-写需原子性」时有价值。
-- 创建时“不传”与“传null”同义，都是没有这个值，所以创建时不需要三态包装
+- 创建时字段缺席与显式 `null` 是否等价，以各字段契约为准，不统一要求三态包装。View 的 `config` 是例外：缺席默认 `{}`，显式 `null` → `400`；通过 `json.RawMessage` 区分（§10）。
 
 ### 2.5 事务与级联速查
 
@@ -480,13 +480,13 @@ View 行形状（config 为后端 opaque 透传对象）：
 ```
 
 ### GET /workspaces/:wid/views `P2`
-query：`surface` 必传（四值枚举；缺席或非法 → `400 VALIDATION_FAILED`）；`entityType` 可选（task|project，非法 → 400；views_page 分 tab 用，其余 surface 传则同集过滤）；`projectId`：surface=project_issues 时**必传**（缺席 → 400、非 UUID → 400），其余 surface 传 → 400。
+query：`surface` 必传（四值枚举；缺席或非法 → `400 VALIDATION_FAILED`）；`entityType` 可选（task|project，缺席或空串视为未提供，非空非法值 → 400；非 project_issues 三面传非空值则按 entity 过滤，views_page 分 tab 用；project_issues 面仅校验枚举、不参与查询——该面 view 恒为 task）；`projectId`：surface=project_issues 时**必传**（缺席或空串 → 400、非 UUID → 400），其余 surface 传非空值 → 400（空串视为缺席）。
 **200**: `View[]`（created_at 升序；零行 → `[]`）。
 → sqlc: `ListViewsBySurface` / `ListViewsBySurfaceAndEntityType` / `ListViewsByProject`（枚举参数不可传空串，故拆查询，同 label scope 约定）
 
 ### POST /workspaces/:wid/views `P2`
-**请求**: `{ "name": "必填 trim 非空", "description": "可选默认 ''", "surface": "必填", "entityType": "必填", "projectId": "仅 project_issues 面可传", "config": "可选，JSON object，默认 {}" }`。
-surface⇒entityType 一致性与 project_id scope 后端强制（P2.md §4.1）：tasks_page / project_issues ⇒ task；projects_page ⇒ project；views_page 两者皆可；project_issues 的 projectId 必属同 workspace 且未软删（否则 `404 NOT_FOUND`），其余 surface 传 projectId → 400。**不做重名约束**。config 非 object（如数组/标量）→ 400。
+**请求**: `{ "name": "必填 trim 非空", "description": "可选默认 ''", "surface": "必填", "entityType": "必填", "projectId": "project_issues 面必填 UUID；其余面仅允许缺席或 null", "config": "可选，JSON object；缺席默认 {}，不可 null" }`。
+surface⇒entityType 一致性与 project_id scope 后端强制（P2.md §4.1）：tasks_page / project_issues ⇒ task；projects_page ⇒ project；views_page 两者皆可。project_issues 的 projectId 缺席、显式 `null` 或非法 UUID → `400 VALIDATION_FAILED`；项目必属同 workspace 且未软删，否则 `404 NOT_FOUND`。其余 surface 的 projectId 缺席或显式 `null` 均允许，非 null 值 → 400。**不做重名约束**。config 缺席默认 `{}`；显式 `null`、数组、标量等非 object 值 → 400。
 **201**: `View`。
 → sqlc: `CreateView`（project 归属校验经 `GetProject`）
 
@@ -508,4 +508,5 @@ surface⇒entityType 一致性与 project_id scope 后端强制（P2.md §4.1）
 
 ## 11. 后序阶段接口索引
 
-- **P3+**：拖拽排序、行内编辑复用 PATCH（无新接口）；标签就地创建复用 POST /labels
+- **P3+**：行内编辑复用 PATCH；拖拽排序待引入顺序字段后确定接口契约。
+- **已提前完成（P1）**：标签就地创建复用 POST /labels，不再列为 P3 待办。

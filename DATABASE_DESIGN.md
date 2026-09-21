@@ -15,7 +15,7 @@
 | 时间戳 | `created_at` / `updated_at` 用 `timestamptz`，默认 `now()` |
 | 业务日期 | `date`（project.start_date / target_date，task.due_date） |
 | 软删除 | 仅 task / project（`deleted_at timestamptz NULL`），其余表硬删除 |
-| 排序 | 不落库。查询时按 `title` / `created_at` / `priority` / `status` / `assignee` 等字段排序；未来若需看板拖拽排序再通过迁移加 `sort_order` |
+| 排序 | 列表 SQL 提供固定基底序（项目 `created_at DESC`；任务 status 枚举序 + `created_at ASC`），Display Ordering 在前端排序，选项可随 saved_view.config 保存；当前不设独立行顺序字段，未来若需看板拖拽排序再通过迁移加 `sort_order` |
 | 多租户预留 | 业务表均挂 `workspace_id`；`member.user_id` 预留绑定登录账号；project / task 带 `created_by` |
 | 优先级 | 不入枚举表，统一 `smallint` + `CHECK (BETWEEN 0 AND 4)`：0=无 1=紧急 2=高 3=中 4=低 |
 
@@ -33,6 +33,10 @@ CREATE TYPE label_scope AS ENUM
 
 CREATE TYPE view_entity AS ENUM
   ('task', 'project');
+
+-- v1.4：视图归属面（双轨隔离，P2.md §4.1）
+CREATE TYPE view_surface AS ENUM
+  ('tasks_page', 'projects_page', 'views_page', 'project_issues');
 ```
 
 注意：PostgreSQL 枚举加值容易（`ALTER TYPE ... ADD VALUE`）、删值难（需重建类型），枚举清单须在设计阶段定准。
@@ -47,6 +51,7 @@ erDiagram
     workspace ||--o{ saved_view : "包含"
     workspace ||--o{ task : "包含"
     project |o--o{ task : "可选归属"
+    project |o--o{ saved_view : "project_issues 面项目级 scope (可无)"
     task ||--o{ task : "parent_id 自引用 = 子任务"
     member ||--o{ project : "lead (可无)"
     project ||--o{ project_member : "项目成员"
@@ -248,7 +253,7 @@ erDiagram
 | workspace_id | uuid | NOT NULL, FK→workspace ON DELETE CASCADE | |
 | entity_type | view_entity | NOT NULL | `task`=任务视图，`project`=项目视图（对齐 Views 页两个 tab） |
 | surface | view_surface | NOT NULL DEFAULT 'views_page' | **v1.4**：视图归属面 `tasks_page / projects_page / views_page / project_issues`（双轨隔离，P2.md §4.1） |
-| project_id | uuid | NULL, FK→project ON DELETE CASCADE | **v1.4**：仅 project_issues 面非空（项目级 scope）；删项目 CASCADE 其 view |
+| project_id | uuid | NULL, FK→project ON DELETE CASCADE | **v1.4**：仅 project_issues 面非空（项目级 scope）；FK CASCADE 仅物理删项目时触发，应用层软删项目不触发（该面 view 变孤儿，project_issues 生命周期待接，见 §5 与 api.md §2.3） |
 | name | text | NOT NULL | 视图名，如“按优先级看板” |
 | description | text | NOT NULL DEFAULT '' | 视图描述 |
 | config | jsonb | NOT NULL DEFAULT '{}' | 筛选 + 展示控制配置 |
@@ -258,12 +263,12 @@ erDiagram
 
 surface 与 entity_type 一致性由后端强制：`tasks_page ⇒ task`、`projects_page ⇒ project`、`project_issues ⇒ task ∧ project_id 必传且属同 workspace`；`views_page` 两者皆可；project_id 仅 project_issues 面可非空。
 
-config 结构约定（**后端 opaque**：CRUD 原样存、原样返回、不解释内容，仅要求 JSON object；契约见 P2.md §4.2——filters 有序条件列表 + display 面板四 section 状态，camelCase）：
+config 结构约定（**后端 opaque**：CRUD 原样存、原样返回、不解释内容，仅要求 JSON object；契约见 P2.md §4.2——filters 有序条件列表 + display 面板状态，camelCase，形状按 surface 而异；下例为已落地的 projects_page）：
 
 ```json
 {
-  "filters": [{ "field": "status", "op": "isAnyOf", "values": ["todo", "in_progress"] }],
-  "display": { "groupBy": "priority", "ordering": { "field": "createdAt", "dir": "desc" }, "visible": { "priority": true }, "showSubtasks": true, "nesting": true }
+  "filters": [{ "field": "status", "op": "isAnyOf", "values": ["planned", "in_progress"] }],
+  "display": { "grouping": "priority", "subGrouping": "none", "timeframe": "month", "orderField": "createdAt", "orderDir": "desc", "showClosed": "none", "showEmptyGroups": false, "visible": { "status": true, "priority": true, "lead": true, "taskCount": true } }
 }
 ```
 
@@ -304,7 +309,7 @@ project 与 task 遵循同一原则：**业务属性中只有 status 和 priorit
 | workspace | 硬删除 | 其下 project / task / member / label / saved_view / project_member / 联结行全部 CASCADE 硬删（罕见且明确的毁灭性操作） |
 | member | 硬删除 | task.assignee_id、project.lead_id、project/task.created_by → SET NULL（任务变未指派、项目变 No lead，历史保留）；project_member 联结行 CASCADE |
 | label | 硬删除 | task_label / project_label 联结行 CASCADE，任务和项目本体不受影响 |
-| project | 应用层软删除 | 软删时应用层将其下 task 的 project_id 置 NULL（任务保留为无项目任务，不级联删除）；硬删时 task.project_id SET NULL，project_member / project_label CASCADE |
+| project | 应用层软删除 | 软删时应用层将其下 task 的 project_id 置 NULL（任务保留为无项目任务，不级联删除；project_issues 面 saved_view 亦不级联，变孤儿）；硬删时 task.project_id SET NULL，project_member / project_label / saved_view（project_issues 面）CASCADE |
 | task | 应用层软删除 | 软删时应用层级联软删整棵子任务树；硬删时子任务 CASCADE、task_label CASCADE |
 
 ## 6. 应用层规则（后端保证）
@@ -327,4 +332,4 @@ project 与 task 遵循同一原则：**业务属性中只有 status 和 priorit
 | 我负责的所有任务 | `WHERE assignee_id=? AND deleted_at IS NULL` | ✅ |
 | 按标签筛选任务 | task_label JOIN | ✅ 双向索引 |
 | 近期到期任务 | `WHERE due_date < ?` | ✅ |
-| 项目列表排序 | `ORDER BY priority / status / name / created_at` | 个人数据量无需额外索引 |
+| 项目列表排序 | SQL 固定 `ORDER BY p.created_at DESC` 基底序；Display Ordering 在前端按选定属性排序（见 api.md §2.2） | 个人数据量无需额外排序索引 |

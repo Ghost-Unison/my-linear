@@ -1,9 +1,9 @@
 // 行内视图编辑 panel（P2.md §1.9 形态 / §6 V2 item 3）：name 行（层叠图标 + name 输入 + 右靠
 // Cancel/Save）+ Description 行 + chip 行（draft 条件 chips + 行尾右靠 filter/display 双按钮）。
-// 新建模式（V2）：draft 初值 filters 空 + display 继承当前页面；Save = Create view。
-// 编辑模式（V3 接线）：draft = view.config 深拷贝；Save = 元数据 + config PATCH。
-// 编辑期是隔离沙箱：本 panel 的 filter/display 按钮与页头顶部按钮操作同一 draft（页面侧接线），
-// chip 只落本 panel 一处（顶部 chip 行编辑期隐藏），预览口径 = 仅 draft 条件（§1.9）。
+// 新建模式（V2）：普通 "+" 的 filters 为空，Save → new 带生效条件；display 继承点击前生效状态（含 draft）；Save = Create view。
+// 编辑模式：优先恢复该 View 暂存草稿，无草稿时深拷贝保存配置；Save 提交元数据 + config。
+// 新建/编辑期是隔离沙箱：页头 Filter/Display 隐藏，仅本 panel 内的按钮操作 draft。
+// chip 只落本 panel 一处（浏览临时条隐藏），预览口径 = 仅 draft 条件（§1.9）。
 import { useTranslation } from "react-i18next"
 import { Layers, Trash2 } from "lucide-react"
 import { Separator } from "radix-ui"
@@ -22,10 +22,10 @@ interface ViewEditPanelProps {
   surface: Surface
   /** draft 条件列表（沙箱预览口径 = 仅 draft） */
   filters: FilterCond[]
-  /** draft display（新建继承当前页面 / Edit = config.display） */
+  /** 当前草稿 Display：新建继承生效状态；编辑恢复暂存值或保存值。 */
   display: ProjectDisplayState
-  /** 编辑期 Reset 基线（新建 = DEFAULT_DISPLAY / Edit = config.display，§1.9 Reset 三档） */
-  resetTarget: ProjectDisplayState
+  /** Reset 还原保存值；新建传 null，整个新建过程不展示 Display 蓝点和 Reset。 */
+  resetTarget: ProjectDisplayState | null
   saving?: boolean
   filterControl?: FilterMenuControl
   displayControl?: FilterMenuControl

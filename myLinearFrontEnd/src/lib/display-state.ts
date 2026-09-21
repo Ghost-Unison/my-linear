@@ -98,11 +98,6 @@ export function isSameDisplay(a: ProjectDisplayState, b: ProjectDisplayState): b
   )
 }
 
-/** 非默认态判定（display 按钮蓝点）= 与全局默认 DEFAULT_DISPLAY 的等价比较 */
-export function isDefaultDisplay(s: ProjectDisplayState): boolean {
-  return isSameDisplay(s, DEFAULT_DISPLAY)
-}
-
 /** 分组菜单顺序（Linear 同位：No grouping / Lead / Member / Status / Priority / Label / Start / Target） */
 export const GROUP_FIELDS: GroupField[] = [
   "none",
