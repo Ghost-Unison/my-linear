@@ -73,7 +73,7 @@ npm run dev
 > 定位：参考 Linear 的页面布局与信息架构，但**功能上做最大简化**。
 > 视觉美感与交互动效后续迭代优化，先保证功能闭环、信息层级正确。
 
-模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消。**[docs/product-design/P2.md](./docs/product-design/P2.md) 为当前阶段**：三面 Filter / Display options 与四面 saved_view 后端接口已完成；projects 列表 View 的添加、编辑、删除及交互细节已定案，本面功能完成。**浏览临时层与编辑草稿隔离、切 tab 暂存/Cancel 丢弃、新建无蓝点/Reset、Reset 还原保存值**的现行规则与验收例子集中在 P2.md **§4.4.1**，不再随 Linear 行为变动自动调整。其余视图接线与全量回归仍待完成，本轮验证范围及已知异常见 P2.md §6 V3。
+模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消。**[docs/product-design/P2.md](./docs/product-design/P2.md) 为当前阶段**：三面 Filter / Display options 与四面 saved_view 后端接口已完成；Projects / Tasks 列表 View 的创建、编辑、查看、删除、另存及覆盖保存已完成，Tasks 沿用 Projects 的交互逻辑并保留 Active/Backlog/All 预设。**浏览临时层与编辑草稿隔离、切 tab 暂存/Cancel 丢弃、新建无蓝点/Reset、Reset 还原保存值**的现行规则与验收例子集中在 P2.md **§4.4.1**，不再随 Linear 行为变动自动调整。项目详情的 View 接线、workspace 级 Views 页与全量回归仍待完成。本轮 Tasks 构建与 DOM 回归通过，用户手动试用反馈无问题；工具侧视觉验证限制及已知异常继续保留，详见 P2.md §6 V3。
 
 ## 功能边界（裁剪项与后置项）
 
@@ -85,7 +85,7 @@ npm run dev
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
 - **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）——**已完成**，并提前做完原属 P3 的标签就地创建
-- **P2**（进行中）：**已完成** tasks_page / projects_page / project_issues 三面 Filter / Display options、四面 saved_view 后端接口，以及 projects 列表 View 添加/编辑/删除与交互定案；**待完成** tasks_page / project_issues 的 View 接线、workspace 级 Views 页与全量回归。已登记异常仍待修，不计为已解决（见 P2.md §6）。
+- **P2**（进行中）：**已完成** tasks_page / projects_page / project_issues 三面 Filter / Display options、四面 saved_view 后端接口，以及 Projects / Tasks 列表 View 创建/编辑/查看/删除/另存/覆盖与 Filter/Display 联动；**待完成** project_issues 的 View 接线、workspace 级 Views 页与全量回归。已登记异常仍待修，不计为已解决（见 P2.md §6）。
 - **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、交互细节打磨
 - **P4**：开源化（注册登录、多租户、云上部署）
 

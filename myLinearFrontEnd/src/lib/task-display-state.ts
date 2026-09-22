@@ -6,7 +6,7 @@
 // - Show sub-issues / Nested sub-issues 双开关取代项目侧无对应物：sub 关 = 仅一级行；sub 开 + nested 关 =
 //   平铺 + "› 父标题" 面包屑；sub 开 + nested 开 = 树形（跨组值置灰）；树形渲染集 = 锚点祖先链 ∪ 锚点完整子树
 //   （侧分支剪枝 + completed 链条置灰，2026-09-14 修订④，§2.6）；
-// - Completed tasks（done/canceled）档位仅 All tab 面板展示（其余 tab 基底条件已排除 completed）；
+// - Completed tasks（done/canceled）档位仅在 Active/Backlog 浏览态隐藏；All、自定义 View、新建/编辑均展示；
 // - Order completed by recency 不实现（无完成时间字段），面板不渲染该行。
 import type { TaskRow, TaskStatus } from "@/api/types"
 import { NONE, TASK_STATUSES } from "@/lib/filter-state"
@@ -44,7 +44,7 @@ export interface TaskDisplayState {
   subGrouping: TaskGroupField
   orderField: TaskOrderField
   orderDir: OrderDir
-  /** 完结态任务（done/canceled）展示档位：none = 隐藏 / all = 展示（默认）；面板行仅 All tab 展示 */
+  /** 完结态任务（done/canceled）展示档位：none = 隐藏 / all = 展示（默认）；面板行显隐由页面作用域决定 */
   showCompleted: "none" | "all"
   /** 展示子任务：关 = 仅一级任务行（父不在结果集的孤儿仍展示） */
   showSubIssues: boolean
@@ -83,21 +83,21 @@ export const newTaskDisplay = (): TaskDisplayState => ({
   visible: { ...DEFAULT_TASK_DISPLAY.visible },
 })
 
-/** 非默认态判定（display 按钮蓝点 / Reset 行显隐）；orderDir 在 manual 下无意义，回 manual 时由 setter 复位 asc */
-export function isDefaultTaskDisplay(s: TaskDisplayState): boolean {
+/** 两个任务 display 状态是否等价（Reset 行显隐 / view 偏离判定复用）；所有字段与列开关逐键比较。 */
+export function isSameTaskDisplay(a: TaskDisplayState, b: TaskDisplayState): boolean {
   if (
-    s.grouping !== DEFAULT_TASK_DISPLAY.grouping ||
-    s.subGrouping !== DEFAULT_TASK_DISPLAY.subGrouping ||
-    s.orderField !== DEFAULT_TASK_DISPLAY.orderField ||
-    s.orderDir !== DEFAULT_TASK_DISPLAY.orderDir ||
-    s.showCompleted !== DEFAULT_TASK_DISPLAY.showCompleted ||
-    s.showSubIssues !== DEFAULT_TASK_DISPLAY.showSubIssues ||
-    s.nestedSubIssues !== DEFAULT_TASK_DISPLAY.nestedSubIssues ||
-    s.showEmptyGroups !== DEFAULT_TASK_DISPLAY.showEmptyGroups
+    a.grouping !== b.grouping ||
+    a.subGrouping !== b.subGrouping ||
+    a.orderField !== b.orderField ||
+    a.orderDir !== b.orderDir ||
+    a.showCompleted !== b.showCompleted ||
+    a.showSubIssues !== b.showSubIssues ||
+    a.nestedSubIssues !== b.nestedSubIssues ||
+    a.showEmptyGroups !== b.showEmptyGroups
   )
     return false
   return (Object.keys(DEFAULT_TASK_DISPLAY.visible) as TaskColumn[]).every(
-    (k) => s.visible[k] === DEFAULT_TASK_DISPLAY.visible[k],
+    (k) => a.visible[k] === b.visible[k],
   )
 }
 

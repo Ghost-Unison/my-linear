@@ -63,12 +63,12 @@ export function useProjectTasks(
   })
 }
 
-export function useWorkspaceTasks(workspaceId: string | undefined, f: readonly string[]) {
+export function useWorkspaceTasks(workspaceId: string | undefined, f: readonly string[], enabled = true) {
   return useQuery({
     // f= 编码串数组进 queryKey（同 useProjects 范式）：tab/chip 条件切换即发请求
     queryKey: [...tasksKey(workspaceId!), "list", [...f]],
     queryFn: () => listWorkspaceTasks(workspaceId!, f),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && enabled,
   })
 }
 

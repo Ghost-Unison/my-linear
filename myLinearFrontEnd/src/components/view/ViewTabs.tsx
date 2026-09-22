@@ -8,7 +8,7 @@ import { Eye, Layers, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react"
 import { HoverCard } from "radix-ui"
 import type { View } from "@/api/types"
 import { cn } from "@/lib/utils"
-import { decodeProjectConfig } from "@/lib/view-state"
+import { decodeViewFilters } from "@/lib/view-state"
 import { findSpec, opLabelKey, type FieldSpec, type FilterCond } from "@/lib/filter-state"
 import { useValueLabel } from "@/components/filter/filter-options"
 import { tabPill } from "@/components/layout/PageHeader"
@@ -31,8 +31,8 @@ export interface ViewEditing {
 
 interface ViewTabsProps {
   workspaceId: string
-  /** 预设 tab 文案（projects_page = "All projects"） */
-  presetLabel: string
+  /** 页面预设：Projects 单个 All，Tasks 保留 Active / Backlog / All。 */
+  presets: { key: string; label: string; active: boolean; onSelect: () => void }[]
   views: View[]
   /** 当前激活 view id；null = 预设 tab 激活 */
   activeViewId: string | null
@@ -40,7 +40,6 @@ interface ViewTabsProps {
   editing: ViewEditing | null
   /** 存在偏离（currentState ≠ view.config）的 view id 集合 → 偏离点 */
   deviatedViewIds: ReadonlySet<string>
-  onSelectPreset: () => void
   onSelectView: (id: string) => void
   onNewView: () => void
   onEditView: (id: string) => void
@@ -51,12 +50,11 @@ interface ViewTabsProps {
 
 export function ViewTabs({
   workspaceId,
-  presetLabel,
+  presets,
   views,
   activeViewId,
   editing,
   deviatedViewIds,
-  onSelectPreset,
   onSelectView,
   onNewView,
   onEditView,
@@ -89,15 +87,21 @@ export function ViewTabs({
   return (
     <>
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto py-0.5">
-        <button
-          ref={presetRef}
-          type="button"
-          onClick={onSelectPreset}
-          aria-current={presetActive ? "page" : undefined}
-          className={cn(tabPill(presetActive), "shrink-0 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50")}
-        >
-          {presetLabel}
-        </button>
+        {presets.map((preset, index) => {
+          const active = presetActive && preset.active
+          return (
+            <button
+              key={preset.key}
+              ref={index === 0 ? presetRef : undefined}
+              type="button"
+              onClick={preset.onSelect}
+              aria-current={active ? "page" : undefined}
+              className={cn(tabPill(active), "shrink-0 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50")}
+            >
+              {preset.label}
+            </button>
+          )
+        })}
 
         {views.map((v) => {
           // 编辑已有 view：该 view 的 tab 转为临时态（虚线 + 铅笔 + draft 名）
@@ -290,7 +294,7 @@ function SavedViewSummary({ workspaceId, view }: { workspaceId: string; view: Vi
   const surface = view.surface === "views_page"
     ? view.entityType === "project" ? "projects_page" : "tasks_page"
     : view.surface
-  const filters = decodeProjectConfig(view.config).filters.flatMap((cond) => {
+  const filters = decodeViewFilters(view.config, surface).flatMap((cond) => {
     const spec = findSpec(surface, cond.field)
     return spec ? [{ cond, spec }] : []
   })

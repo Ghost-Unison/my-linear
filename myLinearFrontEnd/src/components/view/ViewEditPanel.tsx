@@ -4,15 +4,14 @@
 // 编辑模式：优先恢复该 View 暂存草稿，无草稿时深拷贝保存配置；Save 提交元数据 + config。
 // 新建/编辑期是隔离沙箱：页头 Filter/Display 隐藏，仅本 panel 内的按钮操作 draft。
 // chip 只落本 panel 一处（浏览临时条隐藏），预览口径 = 仅 draft 条件（§1.9）。
+import type { ReactNode } from "react"
 import { useTranslation } from "react-i18next"
 import { Layers, Trash2 } from "lucide-react"
 import { Separator } from "radix-ui"
 import type { FilterCond, Surface } from "@/lib/filter-state"
-import type { ProjectDisplayState } from "@/lib/display-state"
 import { Button, PendingLabel } from "@/components/ui/button"
 import { FilterButton, type FilterMenuControl } from "@/components/filter/filter-menu"
 import { FilterChip } from "@/components/filter/filter-chips"
-import { DisplayButton } from "@/components/display/display-menu"
 
 interface ViewEditPanelProps {
   mode: "new" | "edit"
@@ -22,19 +21,15 @@ interface ViewEditPanelProps {
   surface: Surface
   /** draft 条件列表（沙箱预览口径 = 仅 draft） */
   filters: FilterCond[]
-  /** 当前草稿 Display：新建继承生效状态；编辑恢复暂存值或保存值。 */
-  display: ProjectDisplayState
-  /** Reset 还原保存值；新建传 null，整个新建过程不展示 Display 蓝点和 Reset。 */
-  resetTarget: ProjectDisplayState | null
+  /** 页面注入对应 Display 按钮：操作草稿，Reset 基准为保存值；新建没有基准。 */
+  displayButton: ReactNode
   saving?: boolean
   filterControl?: FilterMenuControl
-  displayControl?: FilterMenuControl
   onReset?: () => void
   onDelete?: () => void
   onNameChange: (v: string) => void
   onDescriptionChange: (v: string) => void
   onFiltersChange: (next: FilterCond[]) => void
-  onDisplayChange: (next: ProjectDisplayState) => void
   onSave: () => void
   onCancel: () => void
 }
@@ -46,17 +41,14 @@ export function ViewEditPanel({
   workspaceId,
   surface,
   filters,
-  display,
-  resetTarget,
+  displayButton,
   saving,
   filterControl,
-  displayControl,
   onReset,
   onDelete,
   onNameChange,
   onDescriptionChange,
   onFiltersChange,
-  onDisplayChange,
   onSave,
   onCancel,
 }: ViewEditPanelProps) {
@@ -133,7 +125,7 @@ export function ViewEditPanel({
             conds={filters}
             onChange={onFiltersChange}
           />
-          <DisplayButton {...displayControl} state={display} onChange={onDisplayChange} resetTarget={resetTarget} />
+          {displayButton}
         </div>
       </div>
     </fieldset>

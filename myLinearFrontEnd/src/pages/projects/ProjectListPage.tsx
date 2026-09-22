@@ -413,12 +413,11 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
             busy={busy || !viewQuery.isSuccess || !viewReady}
             onEditView={editView}
             onDeleteView={requestDeleteView}
-            presetLabel={t("project.allProjects")}
+            presets={[{ key: PRESET_TAB, label: t("project.allProjects"), active: true, onSelect: activatePreset }]}
             views={views ?? []}
             activeViewId={activeViewId}
             editing={draft ? { mode: draft.mode, viewId: draft.viewId, name: draft.name } : null}
             deviatedViewIds={deviatedViewIds}
-            onSelectPreset={activatePreset}
             onSelectView={activateView}
             onNewView={() => startNewView()}
           />
@@ -473,15 +472,19 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
           workspaceId={workspaceId!}
           surface="projects_page"
           filters={draft.filters}
-          display={draft.display}
-          resetTarget={draft.mode === "new" ? null : saved.display}
+          displayButton={
+            <DisplayButton
+              {...panelControl("display")}
+              state={draft.display}
+              onChange={setEffectiveDisplay}
+              resetTarget={draft.mode === "new" ? null : saved.display}
+            />
+          }
           saving={busy}
           filterControl={panelControl("filter")}
-          displayControl={panelControl("display")}
           onNameChange={(v) => setDraft({ ...draft, name: v })}
           onDescriptionChange={(v) => setDraft({ ...draft, description: v })}
           onFiltersChange={setEffectiveConds}
-          onDisplayChange={setEffectiveDisplay}
           onReset={draft.mode === "edit" ? resetDraft : undefined}
           onDelete={draft.viewId ? () => requestDeleteView(draft.viewId!) : undefined}
           onSave={saveDraft}

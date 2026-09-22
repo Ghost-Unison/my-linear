@@ -1,7 +1,7 @@
 // 任务列表 Display options 按钮 + popover 面板（tasks_page 切片，P2.md §3 + 2026-09 任务切片修订注）：
 // Grouping / Sub-grouping / Ordering / Completed tasks（仅 All tab）/ Show sub-issues +
 // List options（Nested sub-issues 条件行 / Show empty groups / Display properties 列 chip）+
-// 底部 Reset（仅非默认态）。样式与项目侧面板同构（共享 panel-parts 原语）。
+// 底部 Reset 还原保存的 Display（缺省回默认）；新建无保存基准，不展示蓝点或 Reset。
 // 纯前端内存状态（总决策 2）：面板操作只写页面 state（每 tab 一份），不发请求、不进 URL。
 // 后置后续优化（本切片不渲染控件，见 P2.md 修订注）：
 // - Grouping 行前的组序拖拽入口（Linear Group ordering 面板，用户图2）；
@@ -15,7 +15,7 @@ import {
   TASK_COLUMNS,
   TASK_GROUP_FIELDS,
   TASK_ORDER_FIELDS,
-  isDefaultTaskDisplay,
+  isSameTaskDisplay,
   taskGroupFieldLabelKey,
   taskOrderColumn,
   taskOrderFieldLabelKey,
@@ -36,12 +36,25 @@ interface TaskDisplayButtonProps {
   onChange: (next: TaskDisplayState) => void
   /** Completed tasks 行仅 All tab 展示（其余 tab 基底条件已排除 completed，用户定案 2026-09） */
   showCompletedRow: boolean
+  /** 缺席 = 预设默认；View 浏览/编辑 = 保存 display；null = 新建，无蓝点与 Reset。 */
+  resetTarget?: TaskDisplayState | null
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
 }
 
-/** 页头 display 按钮：Linear 圆形风格，非默认态亮蓝点（同 filter 按钮约定） */
-export function TaskDisplayButton({ state, onChange, showCompletedRow }: TaskDisplayButtonProps) {
+/** Display 按钮：当前值偏离保存/默认基准时亮点；新建没有基准，始终不亮点。 */
+export function TaskDisplayButton({
+  state,
+  onChange,
+  showCompletedRow,
+  resetTarget,
+  open: controlledOpen,
+  onOpenChange,
+}: TaskDisplayButtonProps) {
   const { t } = useTranslation()
-  const { open, setOpen, ref, panelRef } = usePopover()
+  const { open, setOpen, ref, panelRef } = usePopover({ open: controlledOpen, onOpenChange })
+  const resetBase = resetTarget === undefined ? DEFAULT_TASK_DISPLAY : resetTarget
+  const isModified = resetBase !== null && !isSameTaskDisplay(state, resetBase)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const [style, setStyle] = useState<CSSProperties | null>(null)
   useLayoutEffect(() => {
@@ -72,7 +85,7 @@ export function TaskDisplayButton({ state, onChange, showCompletedRow }: TaskDis
       <RoundIconButton
         ref={triggerRef}
         label={t("display.button")}
-        active={!isDefaultTaskDisplay(state)}
+        active={isModified}
         onClick={() => setOpen(!open)}
       >
         <SlidersHorizontal className="size-4" />
@@ -207,11 +220,11 @@ export function TaskDisplayButton({ state, onChange, showCompletedRow }: TaskDis
               ))}
             </div>
 
-            {/* 面板底部 Reset：仅非默认态渲染（用户定案 2026-09） */}
-            {!isDefaultTaskDisplay(state) && (
+            {/* Reset 只还原 Display；新建全程隐藏，已有 View 比较并还原保存值。 */}
+            {resetBase && isModified && (
               <ResetRow
                 onReset={() =>
-                  onChange({ ...DEFAULT_TASK_DISPLAY, visible: { ...DEFAULT_TASK_DISPLAY.visible } })
+                  onChange({ ...resetBase, visible: { ...resetBase.visible } })
                 }
               />
             )}
