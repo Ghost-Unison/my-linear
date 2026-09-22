@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { PanelRight, Plus, X } from "lucide-react"
-import type { ProjectDetail, TaskRow, TaskStatus, UpdateProjectInput } from "@/api/types"
+import type { ProjectDetail, TaskRow, TaskStatus, UpdateProjectInput, View } from "@/api/types"
 import { ApiError } from "@/api/client"
 import { displayError, translateError } from "@/lib/errors"
 import { RoundIconButton } from "@/components/ui/round-icon-button"
@@ -10,10 +10,12 @@ import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useSetProjectLabels } from "@/hooks/useLabels"
 import { useDeleteProject, useProject, useUpdateProject } from "@/hooks/useProjects"
 import { useProjectTasks } from "@/hooks/useTasks"
+import { useCreateView, useDeleteView, useUpdateView, useViews } from "@/hooks/useViews"
 import { cn } from "@/lib/utils"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
-import { newTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
-import { PageHeader, tabPill } from "@/components/layout/PageHeader"
+import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
+import { decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
+import { PageHeader } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/dialog"
@@ -23,6 +25,8 @@ import { TaskGroupList } from "@/components/task/TaskGroupList"
 import { FilterButton } from "@/components/filter/filter-menu"
 import { FilterChipRow } from "@/components/filter/filter-chips"
 import { TaskDisplayButton } from "@/components/display/task-display-menu"
+import { ViewTabs } from "@/components/view/ViewTabs"
+import { ViewEditPanel } from "@/components/view/ViewEditPanel"
 import { ProjectPropertiesPanel } from "@/components/project/ProjectPropertiesPanel"
 import {
   ProjectDatesEditor,
@@ -38,46 +42,255 @@ const TABS = [
   { key: "tasks", labelKey: "nav.tasks" },
 ] as const
 
+type ProjectTab = typeof TABS[number]["key"]
+interface ViewDraft extends TaskViewSnapshot {
+  mode: "new" | "edit"
+  viewId?: string
+  name: string
+  description: string
+}
+type ViewPanel = "filter" | "display" | "chips-filter"
+const EMPTY_FILTERS: FilterCond[] = []
+const VIEW_SURFACE = "project_issues"
+
 // 面板开合记忆跨项目共享（Linear 同款抽屉交互）；隐私模式等写入失败静默忽略
 const PANEL_KEY = "myLinear:project-panel-open"
 
 // /w/:workspaceId/projects/:projectId → 项目详情（属性 + 该项目任务，见 P0.md §2）
-// 结构对齐 Linear 项目页：顶部只到面包屑，下方 Overview/Tasks 双 tab，右侧可收起的属性面板
+// 结构对齐 Linear 项目页：Overview/Tasks + 项目级 views，右侧可收起的属性面板。
+// 项目或工作区切换时结束页面会话，避免浏览缓存、草稿及异步回调跨项目串用。
 export function ProjectDetailPage() {
+  const { workspaceId, projectId } = useParams<{ workspaceId: string; projectId: string }>()
+  return <ProjectDetailContent key={`${workspaceId}:${projectId}`} workspaceId={workspaceId!} projectId={projectId!} />
+}
+
+function ProjectDetailContent({ workspaceId, projectId }: { workspaceId: string; projectId: string }) {
   const { t } = useTranslation()
-  const { workspaceId, projectId } = useParams<{
-    workspaceId: string
-    projectId: string
-  }>()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const { data: workspaces } = useWorkspaces()
-  // P2 filter 条件列表镜像进 URL（?f= 重复参数，project_issues 面）；
-  // 与后端同规则丢弃非法条目，保证 chip 行显示与后端求值一致；project 字段在本面隐含
-  const conds = useMemo(() => parseConds(searchParams, "project_issues"), [searchParams])
-  const fParams = useMemo(() => encodeConds(conds), [conds])
-  const setConds = (next: FilterCond[]) => {
-    const sp = new URLSearchParams(searchParams)
-    writeConds(sp, next)
-    setSearchParams(sp, { replace: true })
-  }
   const { data: project, isLoading, isError, error } = useProject(workspaceId, projectId)
+  const updateProject = useUpdateProject(workspaceId)
+  const deleteProject = useDeleteProject(workspaceId)
+  const setProjectLabels = useSetProjectLabels(workspaceId)
+
+  // view 优先于 tab；f= 只承载浏览临时条件，项目作用域始终由任务接口路径固定。
+  const tab: ProjectTab = searchParams.get("tab") === "tasks" ? "tasks" : "overview"
+  const activeViewId = searchParams.get("view")
+  const tabKey = activeViewId ?? tab
+  const conds = useMemo(() => parseConds(searchParams, VIEW_SURFACE), [searchParams])
+  const viewQuery = useViews(workspaceId, VIEW_SURFACE, projectId)
+  const views = viewQuery.data
+  const activeView = views?.find((view) => view.id === activeViewId) ?? null
+  const saved = useMemo(() => decodeTaskConfig(activeView?.config, VIEW_SURFACE), [activeView])
+  const viewReady = !activeViewId || !!activeView
+  const createView = useCreateView(workspaceId)
+  const updateView = useUpdateView(workspaceId)
+  const deleteView = useDeleteView(workspaceId)
+  const busy = createView.isPending || updateView.isPending || deleteView.isPending
+  const [viewError, setViewError] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState<View | null>(null)
+  const [draft, setActiveDraft] = useState<ViewDraft | null>(null)
+  const editDrafts = useRef<Record<string, ViewDraft>>({})
+  const setDraft = (next: ViewDraft) => {
+    if (next.mode === "edit" && next.viewId) editDrafts.current[next.viewId] = next
+    setActiveDraft(next)
+  }
+  // 与列表页同口径：每 tab 浏览临时层、每 View 编辑草稿独立，卸载清空。
+  const [tabs, setTabs] = useState<Record<string, TaskViewSnapshot>>({})
+  const display = tabs[tabKey]?.display ?? saved.display
+  const [absorbing, setAbsorbing] = useState<{
+    viewId: string
+    filters: FilterCond[]
+    settled: boolean
+  } | null>(null)
+  const [openPanel, setOpenPanel] = useState<ViewPanel | null>(null)
+  const panelControl = (id: ViewPanel) => ({
+    open: openPanel === id,
+    onOpenChange: (open: boolean) => setOpenPanel((current) =>
+      open ? id : current === id ? null : current),
+  })
+  const transition = useRef(0)
+  const selectedTab = useRef(tabKey)
+  useEffect(() => {
+    if (selectedTab.current === tabKey) return
+    selectedTab.current = tabKey
+    transition.current++
+    setActiveDraft(null)
+    setOpenPanel(null)
+    setViewError(null)
+  }, [tabKey])
+  useEffect(() => {
+    if (!viewReady) return
+    setTabs((old) => old[tabKey]?.filters === conds && old[tabKey]?.display === display
+      ? old : { ...old, [tabKey]: { filters: conds, display } })
+  }, [tabKey, conds, display, viewReady])
+  useEffect(() => {
+    if (absorbing?.settled && (activeViewId !== absorbing.viewId || conds.length === 0)) {
+      setAbsorbing(null)
+    }
+  }, [absorbing, activeViewId, conds])
+  const browseFilters = useMemo(() =>
+    absorbing?.viewId === activeViewId ? absorbing.filters : [...saved.filters, ...conds],
+  [absorbing, activeViewId, saved.filters, conds])
+  const effectiveConds = draft?.filters ?? browseFilters
+  const effectiveDisplay = draft?.display ?? display
+  const showTasks = !!draft || !!activeViewId || tab === "tasks"
+  const fParams = useMemo(() => encodeConds(effectiveConds), [effectiveConds])
   const {
     data: tasks,
     isLoading: tasksLoading,
     isError: tasksError,
     error: tasksErrorMessage,
-  } = useProjectTasks(workspaceId, projectId, fParams)
-  const updateProject = useUpdateProject(workspaceId!)
-  const deleteProject = useDeleteProject(workspaceId!)
-  const setProjectLabels = useSetProjectLabels(workspaceId!)
+  } = useProjectTasks(workspaceId, projectId, fParams, !!project && !isError && viewReady && showTasks)
+  const displayChanged = !isSameTaskDisplay(display, saved.display)
+  const deviatedViewIds = useMemo(() => new Set((views ?? []).filter((view) => {
+    const state = view.id === activeViewId ? { filters: conds, display } : tabs[view.id]
+    return state && (state.filters.length > 0 ||
+      !isSameTaskDisplay(state.display, decodeTaskConfig(view.config, VIEW_SURFACE).display))
+  }).map((view) => view.id)), [views, activeViewId, tabs, conds, display])
 
-  // Tab 状态放 URL（?tab=），刷新/分享后仍停留在当前 tab；保留 f= 等其余参数（切 tab 不丢 filter）
-  const tab = searchParams.get("tab") ?? "overview"
-  const setTab = (key: string) => {
+  const writeLocation = (id: string | null, filters: FilterCond[], replace = true, preset: ProjectTab = tab) => {
     const sp = new URLSearchParams(searchParams)
-    sp.set("tab", key)
-    setSearchParams(sp, { replace: true })
+    if (id) {
+      sp.set("view", id)
+      sp.delete("tab")
+    } else {
+      sp.delete("view")
+      sp.set("tab", preset)
+    }
+    writeConds(sp, filters)
+    setSearchParams(sp, { replace })
+  }
+  const setConds = (filters: FilterCond[]) => {
+    setTabs((old) => ({ ...old, [tabKey]: { filters, display } }))
+    writeLocation(activeViewId, filters)
+  }
+  const setEffectiveConds = (filters: FilterCond[]) => {
+    if (busy) return
+    if (draft) setDraft({ ...draft, filters })
+    else setConds(filters)
+  }
+  const setEffectiveDisplay = (next: TaskDisplayState) => {
+    if (busy) return
+    if (draft) setDraft({ ...draft, display: next })
+    else setTabs((old) => ({ ...old, [tabKey]: { filters: conds, display: next } }))
+  }
+  const closeEditor = () => {
+    transition.current++
+    setActiveDraft(null)
+    setOpenPanel(null)
+    setViewError(null)
+  }
+  const cancelEdit = () => {
+    if (draft?.viewId) delete editDrafts.current[draft.viewId]
+    closeEditor()
+  }
+  const activateTab = (id: string | null, preset: ProjectTab = "tasks") => {
+    closeEditor()
+    const key = id ?? preset
+    selectedTab.current = key
+    const filters = key === tabKey ? conds : tabs[key]?.filters ?? EMPTY_FILTERS
+    writeLocation(id, filters, false, preset)
+  }
+  const startNewView = (fromCurrent = false) => {
+    if (busy || !viewQuery.isSuccess || !viewReady) return
+    // Overview 没有任务展示上下文，从此入口新建时继承 Tasks 浏览 Display；取消回 Overview。
+    const sourceDisplay = !draft && !activeViewId && tab === "overview"
+      ? tabs.tasks?.display ?? saved.display : effectiveDisplay
+    const snapshot = decodeTaskConfig(encodeTaskConfig(fromCurrent ? browseFilters : [], sourceDisplay), VIEW_SURFACE)
+    closeEditor()
+    setDraft({ mode: "new", name: "", description: "", ...snapshot })
+  }
+  const editView = (id: string) => {
+    const view = views?.find((v) => v.id === id)
+    if (!view || busy) return
+    activateTab(id)
+    setDraft(editDrafts.current[id] ?? {
+      mode: "edit", viewId: id, name: view.name, description: view.description,
+      ...decodeTaskConfig(view.config, VIEW_SURFACE),
+    })
+  }
+  const resetView = () => {
+    if (busy) return
+    setTabs((old) => ({ ...old, [tabKey]: { filters: [], display: saved.display } }))
+    writeLocation(activeViewId, [])
+    setOpenPanel(null)
+  }
+  const resetDraft = () => {
+    const view = views?.find((v) => v.id === draft?.viewId)
+    if (!draft || !view || busy) return
+    setDraft({ ...draft, name: view.name, description: view.description, ...decodeTaskConfig(view.config, VIEW_SURFACE) })
+    setOpenPanel(null)
+  }
+  const saveDraft = () => {
+    if (!draft || !draft.name.trim() || busy) return
+    const version = transition.current
+    const resumeFilters = draft.mode === "edit" ? conds : EMPTY_FILTERS
+    setOpenPanel(null)
+    setViewError(null)
+    const input = { name: draft.name.trim(), description: draft.description.trim(),
+      config: encodeTaskConfig(draft.filters, draft.display) }
+    const onSuccess = (view: View) => {
+      delete editDrafts.current[view.id]
+      const next = { filters: resumeFilters, display: decodeTaskConfig(view.config, VIEW_SURFACE).display }
+      setTabs((old) => ({ ...old, [view.id]: next }))
+      if (transition.current !== version) return
+      closeEditor()
+      selectedTab.current = view.id
+      writeLocation(view.id, next.filters)
+    }
+    const onError = (err: unknown) => {
+      if (transition.current === version) setViewError(displayError(t, err, "common.saveFailed"))
+    }
+    if (draft.mode === "edit" && draft.viewId) {
+      updateView.mutate({ viewId: draft.viewId, input }, { onSuccess, onError })
+    } else {
+      createView.mutate({ ...input, surface: VIEW_SURFACE, entityType: "task", projectId }, { onSuccess, onError })
+    }
+  }
+  const saveToThisView = () => {
+    if (!activeView || busy) return
+    const id = activeView.id
+    const version = transition.current
+    setOpenPanel(null)
+    setViewError(null)
+    // 保存缓存与 URL 临时层交接前固定取数快照，避免短暂重复 AND。
+    setAbsorbing({ viewId: id, filters: browseFilters, settled: false })
+    updateView.mutate({ viewId: id, input: { config: encodeTaskConfig(browseFilters, display) } }, {
+      onSuccess: (view) => {
+        delete editDrafts.current[id]
+        setTabs((old) => ({ ...old, [id]: { filters: [], display: decodeTaskConfig(view.config, VIEW_SURFACE).display } }))
+        if (selectedTab.current === id) writeLocation(id, [])
+        setAbsorbing((current) => current?.viewId === id ? { ...current, settled: true } : current)
+      },
+      onError: (err) => {
+        setAbsorbing(null)
+        if (transition.current === version) setViewError(displayError(t, err, "common.saveFailed"))
+      },
+    })
+  }
+  const requestDeleteView = (id: string) => {
+    if (busy) return
+    setOpenPanel(null)
+    setViewError(null)
+    setDeleting(views?.find((v) => v.id === id) ?? null)
+  }
+  const confirmDeleteView = () => {
+    if (!deleting || busy) return
+    const id = deleting.id
+    deleteView.mutate(id, {
+      onSuccess: () => {
+        setDeleting(null)
+        delete editDrafts.current[id]
+        setTabs((old) => { const next = { ...old }; delete next[id]; return next })
+        if (selectedTab.current === id) activateTab(null)
+      },
+      onError: (err) => {
+        setDeleting(null)
+        setViewError(displayError(t, err, "view.deleteFailed"))
+      },
+    })
   }
 
   const [panelOpen, setPanelOpen] = useState(() => {
@@ -104,11 +317,6 @@ export function ProjectDetailPage() {
     setCreateStatus(status)
     setCreateOpen(true)
   }
-
-  // display 状态本面一份（project_tasks 切片，P2.md §3 注）：纯内存，切项目/刷新复位；
-  // 默认态同 tasks_page（Status 分组 + sub/nested 双开）；过渡期 fixedDisplay（有过滤自动平铺）
-  // 已退役——过滤下孤儿/链条由规则④孤儿提根置灰与平铺面包屑兜底，tree/flat 交还用户双开关
-  const [display, setDisplay] = useState<TaskDisplayState>(newTaskDisplay)
 
   const [confirmDelete, setConfirmDelete] = useState(false)
 
@@ -167,26 +375,45 @@ export function ProjectDetailPage() {
             ]}
           />
         }
-        tabs={TABS.map((tb) => (
-          <button key={tb.key} onClick={() => setTab(tb.key)} className={tabPill(tab === tb.key)}>
-            {t(tb.labelKey)}
-          </button>
-        ))}
+        tabs={
+          <ViewTabs
+            workspaceId={workspaceId}
+            presets={TABS.map((preset) => ({
+              key: preset.key, label: t(preset.labelKey), active: tab === preset.key,
+              onSelect: () => activateTab(null, preset.key),
+            }))}
+            views={views ?? []}
+            activeViewId={activeViewId}
+            editing={draft ? { mode: draft.mode, viewId: draft.viewId, name: draft.name } : null}
+            deviatedViewIds={deviatedViewIds}
+            busy={busy || !viewQuery.isSuccess || !viewReady}
+            onSelectView={(id) => activateTab(id)}
+            onNewView={() => startNewView()}
+            onEditView={editView}
+            onDeleteView={requestDeleteView}
+          />
+        }
         actions={
           <>
-            {/* filter/display 按钮：对齐 tasks_page（页头 actions，Filter 右侧），置于折叠面板按钮左侧；
-                仅 Issues tab 显示（Overview 无列表上下文），条件仍由 URL ?f= 承载；
-                本面无 tab 基底作用域排除，Completed tasks 行恒展示 */}
-            {tab === "tasks" && (
-              <>
+            {/* Overview 无列表入口；新建/编辑仅 panel 内操作草稿，Completed tasks 恒可配置。 */}
+            {showTasks && !draft && (
+              <fieldset disabled={busy || !viewReady} className="flex items-center gap-1">
                 <FilterButton
-                  workspaceId={workspaceId!}
-                  surface="project_issues"
+                  {...panelControl("filter")}
+                  showIndicator={false}
+                  workspaceId={workspaceId}
+                  surface={VIEW_SURFACE}
                   conds={conds}
-                  onChange={setConds}
+                  onChange={setEffectiveConds}
                 />
-                <TaskDisplayButton state={display} onChange={setDisplay} showCompletedRow />
-              </>
+                <TaskDisplayButton
+                  {...panelControl("display")}
+                  state={display}
+                  onChange={setEffectiveDisplay}
+                  resetTarget={saved.display}
+                  showCompletedRow
+                />
+              </fieldset>
             )}
             <RoundIconButton
               label={panelOpen ? t("common.collapsePanel") : t("common.expandPanel")}
@@ -214,31 +441,89 @@ export function ProjectDetailPage() {
       )}
 
       <div className="flex min-h-0 flex-1">
-        <div className="min-w-0 flex-1 overflow-y-auto px-6 py-6 scrollbar-gutter-stable">
-          {/* 内容列限宽居中（Linear 式）：面板开合时可用宽度变化，居中容器自然产生“被面板推挤”的位移；
-              overview 与任务详情页同宽（max-w-3xl），两页推挤前后几何一致；tasks 列表占满可用宽 */}
-          {tab === "overview" ? (
-            <div className="mx-auto w-full max-w-3xl">
-              <OverviewContent
-                project={project}
-                workspaceId={workspaceId!}
-                onPatch={patch}
-                onLabelsChange={setLabels}
-              />
-            </div>
-          ) : (
-            <TasksContent
-              tasks={tasks ?? []}
-              tasksLoading={tasksLoading}
-              tasksError={tasksError ? displayError(t, tasksErrorMessage, "task.loadFailed") : null}
-              workspaceId={workspaceId!}
-              conds={conds}
-              onChange={setConds}
-              display={display}
-              onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
-              onNewTask={openCreate}
-            />
+        <div className="flex min-w-0 flex-1 flex-col">
+          {viewError && <p role="alert" className="mx-6 mb-2 text-sm text-destructive">{viewError}</p>}
+          {viewQuery.isError && (
+            <p role="alert" className="mx-6 mb-2 text-sm text-destructive">
+              {displayError(t, viewQuery.error, "errors.loadFailed")}
+            </p>
           )}
+          {!viewReady && viewQuery.isSuccess && (
+            <p role="alert" className="mx-6 mb-2 text-sm text-destructive">{t("view.notFound")}</p>
+          )}
+          {!viewReady && viewQuery.isPending && (
+            <p className="mx-6 mb-2 text-sm text-muted-foreground">{t("common.loading")}</p>
+          )}
+          {draft ? (
+            <ViewEditPanel
+              mode={draft.mode}
+              name={draft.name}
+              description={draft.description}
+              workspaceId={workspaceId}
+              surface={VIEW_SURFACE}
+              filters={draft.filters}
+              displayButton={
+                <TaskDisplayButton
+                  {...panelControl("display")}
+                  state={draft.display}
+                  onChange={setEffectiveDisplay}
+                  resetTarget={draft.mode === "new" ? null : saved.display}
+                  showCompletedRow
+                />
+              }
+              saving={busy}
+              filterControl={panelControl("filter")}
+              onNameChange={(name) => setDraft({ ...draft, name })}
+              onDescriptionChange={(description) => setDraft({ ...draft, description })}
+              onFiltersChange={setEffectiveConds}
+              onReset={draft.mode === "edit" ? resetDraft : undefined}
+              onDelete={draft.viewId ? () => requestDeleteView(draft.viewId!) : undefined}
+              onSave={saveDraft}
+              onCancel={cancelEdit}
+            />
+          ) : (
+            showTasks && viewReady && (conds.length > 0 || displayChanged) && (
+              <FilterChipRow
+                workspaceId={workspaceId}
+                surface={VIEW_SURFACE}
+                conds={conds}
+                onChange={setEffectiveConds}
+                activeView={activeView}
+                disabled={busy}
+                label={t("view.temporaryChanges")}
+                emptyHint={displayChanged ? t("view.displayModified") : undefined}
+                filterControl={panelControl("chips-filter")}
+                onReset={resetView}
+                onSaveToView={activeView ? saveToThisView : undefined}
+                onCreateNewView={() => startNewView(true)}
+              />
+            )
+          )}
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-6 scrollbar-gutter-stable">
+            {/* 内容列限宽居中（Linear 式）：面板开合时可用宽度变化，居中容器自然产生“被面板推挤”的位移；
+                overview 与任务详情页同宽（max-w-3xl），两页推挤前后几何一致；tasks 列表占满可用宽 */}
+            {!showTasks ? (
+              <div className="mx-auto w-full max-w-3xl">
+                <OverviewContent
+                  project={project}
+                  workspaceId={workspaceId}
+                  onPatch={patch}
+                  onLabelsChange={setLabels}
+                />
+              </div>
+            ) : viewReady && (
+              <TasksContent
+                tasks={tasks ?? []}
+                tasksLoading={tasksLoading}
+                tasksError={tasksError ? displayError(t, tasksErrorMessage, "task.loadFailed") : null}
+                workspaceId={workspaceId}
+                filtered={!!draft || !!activeViewId || effectiveConds.length > 0}
+                display={effectiveDisplay}
+                onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
+                onNewTask={openCreate}
+              />
+            )}
+          </div>
         </div>
 
         {/* 右侧属性面板：常驻渲染 + 宽度过渡（w-0 ↔ w-96），内容区随 flex 逐帧收窄/推挤，
@@ -273,6 +558,16 @@ export function ProjectDetailPage() {
         onClose={() => setCreateOpen(false)}
       />
 
+      <ConfirmDialog
+        open={deleting !== null}
+        title={t("view.deleteTitle", { name: deleting?.name ?? "" })}
+        description={t("view.deleteDescription")}
+        confirmText={t("view.delete")}
+        destructive
+        pending={deleteView.isPending}
+        onConfirm={confirmDeleteView}
+        onClose={() => { if (!deleteView.isPending) setDeleting(null) }}
+      />
       <ConfirmDialog
         open={confirmDelete}
         title={t("project.deleteConfirmTitle", { name: project.name })}
@@ -344,8 +639,7 @@ function TasksContent({
   tasksLoading,
   tasksError,
   workspaceId,
-  conds,
-  onChange,
+  filtered,
   display,
   onOpenTask,
   onNewTask,
@@ -354,28 +648,17 @@ function TasksContent({
   tasksLoading: boolean
   tasksError: string | null
   workspaceId: string
-  conds: FilterCond[]
-  onChange: (next: FilterCond[]) => void
-  /** display 状态由页面持有（页头 TaskDisplayButton 写、本列表读，P2.md §3 project_tasks 注） */
+  filtered: boolean
+  /** display 由页面视图状态驱动，任务列表仅负责渲染。 */
   display: TaskDisplayState
   onOpenTask: (taskId: string) => void
   onNewTask: (status: TaskStatus) => void
 }) {
   const { t } = useTranslation()
   // 有过滤条件但空 = 无匹配；无过滤条件且空 = 项目暂无任务（对齐 Linear 空态文案）
-  const emptyMsg = conds.length > 0 ? t("filter.emptyResult") : t("project.noTasks")
+  const emptyMsg = filtered ? t("filter.emptyResult") : t("project.noTasks")
   return (
     <div className="flex flex-col">
-      {conds.length > 0 && (
-        // bare：本容器已在 px-6 内容区内，去掉 FilterChipRow 自带 mx-6 避免双重内边距
-        <FilterChipRow
-          bare
-          workspaceId={workspaceId}
-          surface="project_issues"
-          conds={conds}
-          onChange={onChange}
-        />
-      )}
       {tasksLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
       {tasksError && <p className="py-4 text-sm text-destructive">{tasksError}</p>}
       {!tasksLoading && !tasksError && tasks.length === 0 && (

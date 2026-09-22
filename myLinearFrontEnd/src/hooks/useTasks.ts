@@ -55,11 +55,12 @@ export function useProjectTasks(
   projectId: string | undefined,
   // P2 条件列表（f= 编码串数组，同 useWorkspaceTasks 范式）：进 queryKey → 过滤切换发请求
   f: readonly string[] = [],
+  enabled = true,
 ) {
   return useQuery({
     queryKey: [...projectTasksKey(workspaceId!, projectId!), "list", [...f]],
     queryFn: () => listProjectTasks(workspaceId!, projectId!, f),
-    enabled: !!workspaceId && !!projectId,
+    enabled: !!workspaceId && !!projectId && enabled,
   })
 }
 

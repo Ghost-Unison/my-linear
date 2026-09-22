@@ -3,8 +3,8 @@
 // 浏览取数 = saved.filters AND transient，编辑预览仅用 draft；两种会话缓存互不覆盖，卸载清空，刷新按保存值/URL 初始化。
 // config 后端 opaque（jsonb 归一化键序/空白，api.md §10 注）：偏离比对必须解析后对象深比较，禁字符串比对（页面侧用 isSameDisplay 完成）。
 //
-// projects_page / tasks_page 共用过滤条件解码，display 按各面形状独立编解码；
-// project_issues 面仍沿用项目详情原有的临时展示状态。
+// 三个页面级 surface 共用过滤条件解码；projects_page 使用项目 display，
+// tasks_page / project_issues 共用任务 display，filters 按各自 surface 白名单解码。
 import type { ViewConfig } from "@/api/types"
 import {
   DEFAULT_DISPLAY,
@@ -28,7 +28,7 @@ export interface ProjectViewSnapshot {
   display: ProjectDisplayState
 }
 
-/** tasks_page 面 config.display 的前端形状 = TaskDisplayState */
+/** tasks_page / project_issues 面 config.display 的前端形状 = TaskDisplayState */
 export interface TaskViewSnapshot {
   filters: FilterCond[]
   display: TaskDisplayState
@@ -56,8 +56,11 @@ export function decodeProjectConfig(config: ViewConfig | null | undefined): Proj
 }
 
 /** 任务 config → 前端快照（与任务 URL 过滤白名单一致） */
-export function decodeTaskConfig(config: ViewConfig | null | undefined): TaskViewSnapshot {
-  return { filters: decodeViewFilters(config, "tasks_page"), display: decodeTaskDisplay(config?.display) }
+export function decodeTaskConfig(
+  config: ViewConfig | null | undefined,
+  surface: "tasks_page" | "project_issues" = "tasks_page",
+): TaskViewSnapshot {
+  return { filters: decodeViewFilters(config, surface), display: decodeTaskDisplay(config?.display) }
 }
 
 /** display 反序列化：与 DEFAULT_DISPLAY 合并（缺键回默认；visible 子对象深合并防旧 config 缺列） */
