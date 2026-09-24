@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { PanelRight, Plus, X } from "lucide-react"
+import { PanelRight, X } from "lucide-react"
 import type { ProjectDetail, TaskRow, TaskStatus, UpdateProjectInput, View } from "@/api/types"
 import { ApiError } from "@/api/client"
 import { displayError, translateError } from "@/lib/errors"
@@ -15,9 +15,10 @@ import { cn } from "@/lib/utils"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
 import { decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
+import { resolveListEmptyState, type ListEmptyStateValue } from "@/lib/list-empty-state"
+import { displayedTaskRows } from "@/lib/views-task-stats"
 import { PageHeader } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
-import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/dialog"
 import { FieldRow } from "@/components/ui/field-row"
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog"
@@ -27,6 +28,7 @@ import { FilterChipRow } from "@/components/filter/filter-chips"
 import { TaskDisplayButton } from "@/components/display/task-display-menu"
 import { ViewTabs } from "@/components/view/ViewTabs"
 import { ViewEditPanel } from "@/components/view/ViewEditPanel"
+import { ListEmptyState, type ListEmptyStateProps } from "@/components/view/ListEmptyState"
 import { ProjectPropertiesPanel } from "@/components/project/ProjectPropertiesPanel"
 import {
   ProjectDatesEditor,
@@ -139,10 +141,37 @@ function ProjectDetailContent({ workspaceId, projectId }: { workspaceId: string;
   const fParams = useMemo(() => encodeConds(effectiveConds), [effectiveConds])
   const {
     data: tasks,
-    isLoading: tasksLoading,
+    isPending: tasksPending,
+    isSuccess: tasksSuccess,
+    isFetching: tasksFetching,
     isError: tasksError,
     error: tasksErrorMessage,
   } = useProjectTasks(workspaceId, projectId, fParams, !!project && !isError && viewReady && showTasks)
+  const visibleTaskCount = useMemo(() => displayedTaskRows(tasks ?? [], effectiveDisplay).length, [tasks, effectiveDisplay])
+  const tasksLoading = tasksPending || (tasksFetching && visibleTaskCount === 0)
+  // 基准仍走当前项目任务接口，仅去掉浏览临时条件；不将其他项目或草稿数据混入统计。
+  const baselineParams = useMemo(() => encodeConds(saved.filters), [saved.filters])
+  const needsBaseline = !draft && viewReady && !viewQuery.isError && !!project && !isError && showTasks &&
+    conds.length > 0 && tasksSuccess && !tasksFetching && visibleTaskCount === 0 && !busy && !absorbing
+  const baselineQuery = useProjectTasks(workspaceId, projectId, baselineParams, needsBaseline)
+  const baseline = useMemo(() => {
+    // 基准未就绪、刷新中或保存交接期间只显示泛化空态，不能把未知数量装成 0。
+    if (!needsBaseline || !baselineQuery.isSuccess || baselineQuery.isFetching || !baselineQuery.data) return undefined
+    return {
+      rawCount: new Set(baselineQuery.data.map((task) => task.id)).size,
+      visibleCount: displayedTaskRows(baselineQuery.data, effectiveDisplay).length,
+    }
+  }, [needsBaseline, baselineQuery.isSuccess, baselineQuery.isFetching, baselineQuery.data, effectiveDisplay])
+  const emptyState = showTasks && viewReady && !viewQuery.isError && tasksSuccess && !tasksLoading
+    ? resolveListEmptyState({
+        editor: !!draft,
+        savedView: !!activeView,
+        hasTemporaryFilters: !draft && conds.length > 0,
+        rawCount: new Set((tasks ?? []).map((task) => task.id)).size,
+        visibleCount: visibleTaskCount,
+        baseline,
+      })
+    : null
   const displayChanged = !isSameTaskDisplay(display, saved.display)
   const deviatedViewIds = useMemo(() => new Set((views ?? []).filter((view) => {
     const state = view.id === activeViewId ? { filters: conds, display } : tabs[view.id]
@@ -511,13 +540,24 @@ function ProjectDetailContent({ workspaceId, projectId }: { workspaceId: string;
                   onLabelsChange={setLabels}
                 />
               </div>
-            ) : viewReady && (
+            ) : viewReady && !viewQuery.isError && (
               <TasksContent
                 tasks={tasks ?? []}
                 tasksLoading={tasksLoading}
                 tasksError={tasksError ? displayError(t, tasksErrorMessage, "task.loadFailed") : null}
                 workspaceId={workspaceId}
-                filtered={!!draft || !!activeViewId || effectiveConds.length > 0}
+                emptyState={emptyState}
+                emptyStateActions={{
+                  disabled: busy || !!absorbing,
+                  onEditFilters: activeView && !draft ? () => {
+                    if (busy || absorbing) return
+                    editView(activeView.id)
+                    setOpenPanel("filter")
+                  } : undefined,
+                  onAdjustFilters: () => setOpenPanel("filter"),
+                  onClearTemporary: () => { if (!draft && !busy && !absorbing) setConds([]) },
+                  onAdjustDisplay: () => setOpenPanel("display"),
+                }}
                 display={effectiveDisplay}
                 onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
                 onNewTask={openCreate}
@@ -632,14 +672,15 @@ function OverviewContent({
 
 // ---- Tasks tab：项目任务列表（复用 TaskGroupList，创建入口锁定本项目）----
 // 无独立标题行（对齐 Linear：tab 下直接是分组列表，数量在各组头）；
-// 新建入口 = 组头常驻 "+"（以该组状态为默认值）+ 空态按钮
+// 新建入口 = 组头常驻 "+"（以该组状态为默认值）+ 仅基础空态按钮
 
 function TasksContent({
   tasks,
   tasksLoading,
   tasksError,
   workspaceId,
-  filtered,
+  emptyState,
+  emptyStateActions,
   display,
   onOpenTask,
   onNewTask,
@@ -648,29 +689,28 @@ function TasksContent({
   tasksLoading: boolean
   tasksError: string | null
   workspaceId: string
-  filtered: boolean
+  emptyState: ListEmptyStateValue | null
+  emptyStateActions: Pick<ListEmptyStateProps,
+    "disabled" | "onEditFilters" | "onAdjustFilters" | "onClearTemporary" | "onAdjustDisplay">
   /** display 由页面视图状态驱动，任务列表仅负责渲染。 */
   display: TaskDisplayState
   onOpenTask: (taskId: string) => void
   onNewTask: (status: TaskStatus) => void
 }) {
   const { t } = useTranslation()
-  // 有过滤条件但空 = 无匹配；无过滤条件且空 = 项目暂无任务（对齐 Linear 空态文案）
-  const emptyMsg = filtered ? t("filter.emptyResult") : t("project.noTasks")
+  // 错误和加载优先；原始或 Display 空态由页面判定，非空仍沿用原始任务树上下文。
+  if (tasksError) return <p role="alert" className="py-4 text-sm text-destructive">{tasksError}</p>
+  if (tasksLoading) return <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
   return (
     <div className="flex flex-col">
-      {tasksLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
-      {tasksError && <p className="py-4 text-sm text-destructive">{tasksError}</p>}
-      {!tasksLoading && !tasksError && tasks.length === 0 && (
-        <div className="rounded-lg border border-dashed border-border p-10 text-center">
-          <p className="text-sm text-muted-foreground">{emptyMsg}</p>
-          <Button variant="secondary" size="sm" className="mt-4" onClick={() => onNewTask("todo")}>
-            <Plus />
-            {t("task.newTask")}
-          </Button>
-        </div>
-      )}
-      {tasks.length > 0 && (
+      {emptyState ? (
+        <ListEmptyState
+          {...emptyStateActions}
+          state={emptyState}
+          entity="task"
+          onCreate={emptyState.kind === "base" ? () => onNewTask("todo") : undefined}
+        />
+      ) : tasks.length > 0 && (
         <TaskGroupList
           tasks={tasks}
           state={display}

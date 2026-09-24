@@ -23,6 +23,9 @@ interface ViewEditPanelProps {
   filters: FilterCond[]
   /** 页面注入对应 Display 按钮：操作草稿，Reset 基准为保存值；新建没有基准。 */
   displayButton: ReactNode
+  /** 独立 Views 编辑页的只读归属及类型行；页面级 tab 编辑器保持原布局。 */
+  workspaceLabel?: string
+  typeTabs?: ReactNode
   saving?: boolean
   filterControl?: FilterMenuControl
   onReset?: () => void
@@ -42,6 +45,8 @@ export function ViewEditPanel({
   surface,
   filters,
   displayButton,
+  workspaceLabel,
+  typeTabs,
   saving,
   filterControl,
   onReset,
@@ -73,6 +78,7 @@ export function ViewEditPanel({
           className="min-w-0 flex-1 bg-transparent text-sm font-medium text-foreground outline-none placeholder:text-muted-foreground"
         />
         <div className="flex shrink-0 items-center gap-2">
+          {workspaceLabel && <span className="mr-3 hidden text-xs text-muted-foreground lg:inline">{t("viewsPage.saveTo")} · {workspaceLabel}</span>}
           {onDelete && (
             <Button variant="ghost" size="icon" onClick={onDelete} aria-label={t("view.delete")} title={t("view.delete")}>
               <Trash2 />
@@ -104,7 +110,8 @@ export function ViewEditPanel({
       {/* chip 行：draft 条件 chips（左，可换行）+ 行尾右靠 filter/display 双按钮（添加入口即 filter 按钮） */}
       <div className="flex items-center gap-3 px-3 py-3">
         <div className="flex flex-1 flex-wrap items-center gap-1.5">
-          {filters.map((c, i) => (
+          {typeTabs}
+          {!typeTabs && filters.map((c, i) => (
             <FilterChip
               key={`${c.field}.${c.op}.${i}`}
               workspaceId={workspaceId}
@@ -128,6 +135,14 @@ export function ViewEditPanel({
           {displayButton}
         </div>
       </div>
+      {typeTabs && filters.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 px-3 pb-3">
+          {filters.map((c, i) => (
+            <FilterChip key={`${c.field}.${c.op}.${i}`} workspaceId={workspaceId} surface={surface}
+              cond={c} index={i} conds={filters} onChange={onFiltersChange} />
+          ))}
+        </div>
+      )}
     </fieldset>
   )
 }

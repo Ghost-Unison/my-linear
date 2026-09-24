@@ -23,22 +23,23 @@ import {
   buildTaskGroupsFlat,
   buildTaskGroupsTree,
   buildTaskTreeIndex,
-  isTaskCompleted,
   sortTaskRows,
   taskChildVisible,
   taskDisplayRows,
+  taskGroupCountText,
   taskKeptRoots,
   taskNeedsLabels,
   taskNeedsMembers,
   taskNeedsProjects,
-  taskRowGroupValues,
   taskSpanKeptSet,
+  taskTreeRowDimmed,
   type TaskDisplayState,
   type TaskGroupContext,
   type TaskGroupField,
   type TaskGroupNode,
 } from "@/lib/task-display-state"
 import { cn } from "@/lib/utils"
+import { displayedTaskRows } from "@/lib/views-task-stats"
 import { useLabels } from "@/hooks/useLabels"
 import { useMembers } from "@/hooks/useMembers"
 import { useProjects } from "@/hooks/useProjects"
@@ -56,6 +57,10 @@ const DIM = "opacity-60"
 interface TaskGroupListProps {
   /** 平铺任务数组（含子任务），后端基底序（status 枚举序 + created_at 升序，api.md §4） */
   tasks: TaskRow[]
+  /** 已按 display 和独立钻取计算的锚点 ID；基础任务仍保留树上下文，空集合表示无匹配。 */
+  matchIds?: ReadonlySet<string>
+  /** 保存基准任务，仅用于同 display、同组路径的组头计数，不得补入当前任务树。 */
+  baselineTasks?: TaskRow[]
   /** display 状态（页面内存，每 tab 一份）；分组值集异步清单未就绪时分组渲染暂缓 */
   state: TaskDisplayState
   workspaceId: string
@@ -68,6 +73,8 @@ interface TaskGroupListProps {
 
 export function TaskGroupList({
   tasks,
+  matchIds,
+  baselineTasks,
   state,
   workspaceId,
   onOpenTask,
@@ -103,8 +110,8 @@ export function TaskGroupList({
   )
   // 展示行集（flat 行 / 组头计数 / tree 锚点集同源于此）：completed 档 + showSub 档前端渲染层过滤
   const displayRows = useMemo(
-    () => taskDisplayRows(visibleScope, state.showSubIssues),
-    [visibleScope, state.showSubIssues],
+    () => taskDisplayRows(visibleScope, state.showSubIssues, matchIds),
+    [visibleScope, state.showSubIssues, matchIds],
   )
   const treeMode = state.showSubIssues && state.nestedSubIssues
 
@@ -124,6 +131,12 @@ export function TaskGroupList({
       ? buildTaskGroupsTree(base, displayRows, state, ctx, treeIndex)
       : buildTaskGroupsFlat(displayRows, state, ctx)
   }, [base, displayRows, state, ctx, treeMode, ready, treeIndex])
+
+  // 基准只需锚点计数，flat/tree 口径相同；绝不用于补全 base、树索引或渲染行。
+  const baselineGroups = useMemo(() => {
+    if (baselineTasks === undefined || state.grouping === "none" || !ready) return []
+    return buildTaskGroupsFlat(displayedTaskRows(baselineTasks, state), state, ctx)
+  }, [baselineTasks, state, ctx, ready])
 
   // 不分组 tree：锚点 = 展示行集本身（无组条件），同走渲染集剪枝（completed=none 剪纯已完成子树）
   const noneTree = useMemo(() => {
@@ -146,6 +159,8 @@ export function TaskGroupList({
       return next
     })
 
+  if (matchIds !== undefined && displayRows.length === 0)
+    return <p className="py-4 text-sm text-muted-foreground">{tr("filter.emptyResult")}</p>
   if (tasks.length === 0) return null
   // 取回有行但展示作用域清空（All tab completed 档位隐藏全部）：专属空态提示
   if (visibleScope.length === 0)
@@ -213,6 +228,7 @@ export function TaskGroupList({
             collapsed={collapsed}
             onToggle={toggle}
             dimPath={path}
+            matchIds={matchIds}
             state={state}
             onOpenTask={onOpenTask}
             onOpenProject={onOpenProject}
@@ -235,6 +251,7 @@ export function TaskGroupList({
     depth: 1 | 2,
     path: { field: TaskGroupField; value: string }[],
     parentKey: string,
+    baselineNodes: TaskGroupNode[],
   ): ReactNode =>
     nodes.map((g) => {
       const m = meta(g.field, g.value)
@@ -243,6 +260,8 @@ export function TaskGroupList({
       const here = [...path, { field: g.field, value: g.value }]
       const initial = pathInitial(here)
       const addLabel = tr("task.newTaskInGroup", { status: m.label })
+      const baseline = baselineNodes.find((node) => node.field === g.field && node.value === g.value)
+      const countText = taskGroupCountText(g.count, baseline?.count)
       return (
         <div key={key} className={depth === 1 ? "mt-3 first:mt-0" : "mt-1"}>
           {depth === 1 ? (
@@ -257,7 +276,7 @@ export function TaskGroupList({
               <ChevronButton collapsed={isCollapsed} onClick={() => toggle(key)} />
               {m.icon}
               <span className="truncate text-xs font-medium text-foreground">{m.label}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{g.count}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{countText}</span>
               {/* 新建入口常驻显示（对齐 Linear 组头右侧 +） */}
               <button
                 type="button"
@@ -283,7 +302,7 @@ export function TaskGroupList({
               <ChevronButton collapsed={isCollapsed} onClick={() => toggle(key)} />
               {m.icon}
               <span className="shrink-0 truncate text-xs font-medium text-foreground">{m.label}</span>
-              <span className="shrink-0 text-xs text-muted-foreground">{g.count}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">{countText}</span>
               <span className="mx-2 h-px flex-1 bg-border" />
               <button
                 type="button"
@@ -300,7 +319,7 @@ export function TaskGroupList({
           )}
           {!isCollapsed &&
             (g.children.length > 0
-              ? renderGroups(g.children, 2, here, `${key}/`)
+              ? renderGroups(g.children, 2, here, `${key}/`, baseline?.children ?? [])
               : renderRows(g.rows, here, g.kept))}
         </div>
       )
@@ -317,7 +336,7 @@ export function TaskGroupList({
       ) : !ready ? (
         <p className="py-4 text-sm text-muted-foreground">{tr("common.loading")}</p>
       ) : (
-        <div className="flex flex-col">{renderGroups(groups, 1, [], "")}</div>
+        <div className="flex flex-col">{renderGroups(groups, 1, [], "", baselineGroups)}</div>
       )}
     </div>
   )
@@ -487,6 +506,7 @@ interface TaskTreeItemProps {
   onToggle: (id: string) => void
   /** 组路径（field+value）：行值未命中任一路径值则置灰；tree 孤儿（父不在结果集）追加置灰 */
   dimPath: { field: TaskGroupField; value: string }[]
+  matchIds?: ReadonlySet<string>
   state: TaskDisplayState
   onOpenTask: (taskId: string) => void
   onOpenProject?: (projectId: string) => void
@@ -500,6 +520,7 @@ function TaskTreeItem({
   collapsed,
   onToggle,
   dimPath,
+  matchIds,
   state,
   onOpenTask,
   onOpenProject,
@@ -508,12 +529,8 @@ function TaskTreeItem({
   // 剪枝：无锚点分支整体不渲染（生成林外节点）
   const children = (childrenOf.get(task.id) ?? []).filter((c) => !kept || kept.has(c.id))
   const isCollapsed = collapsed.has(task.id)
-  const orphan = !!task.parentId && !parentOf.has(task.parentId)
   // 链条节点（completed 档隐藏但作为锚点祖先保留）同置灰（用户定案 2026-09-14）
-  const dim =
-    orphan ||
-    (state.showCompleted === "none" && isTaskCompleted(task)) ||
-    dimPath.some((p) => !taskRowGroupValues(task, p.field).includes(p.value))
+  const dim = taskTreeRowDimmed(task, state, parentOf, dimPath, matchIds)
 
   return (
     <div>
@@ -561,6 +578,7 @@ function TaskTreeItem({
               collapsed={collapsed}
               onToggle={onToggle}
               dimPath={dimPath}
+              matchIds={matchIds}
               state={state}
               onOpenTask={onOpenTask}
               onOpenProject={onOpenProject}

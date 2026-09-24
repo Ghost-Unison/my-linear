@@ -8,6 +8,7 @@ import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useCreateView, useDeleteView, useUpdateView, useViews } from "@/hooks/useViews"
 import { colorFor } from "@/lib/color"
 import { displayError } from "@/lib/errors"
+import { resolveListEmptyState } from "@/lib/list-empty-state"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import {
   applyShowClosed,
@@ -41,6 +42,7 @@ import { FilterChipRow } from "@/components/filter/filter-chips"
 import { DisplayButton } from "@/components/display/display-menu"
 import { ViewTabs } from "@/components/view/ViewTabs"
 import { ViewEditPanel } from "@/components/view/ViewEditPanel"
+import { ListEmptyState } from "@/components/view/ListEmptyState"
 import { fmtDay, ProjectGroupTree, useGroupValueMeta } from "@/components/display/project-groups"
 import { CreateProjectDialog, type CreateProjectInitial } from "@/components/project/CreateProjectDialog"
 import {
@@ -151,7 +153,7 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
   const effectiveConds = draft?.filters ?? browseFilters
   const effectiveDisplay = draft?.display ?? display
   const fParams = useMemo(() => encodeConds(effectiveConds), [effectiveConds])
-  const { data: projects, isLoading, isError, error } = useProjects(workspaceId, fParams, viewReady)
+  const { data: projects, isPending, isSuccess, isFetching, isError, error } = useProjects(workspaceId, fParams, viewReady)
   const displayChanged = !isSameDisplay(display, saved.display)
   const deviatedViewIds = useMemo(() => new Set((views ?? []).filter((view) => {
     const state = view.id === activeViewId ? { filters: conds, display } : tabs[view.id]
@@ -317,6 +319,31 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     () => applyShowClosed(projects ?? [], effectiveDisplay.showClosed),
     [projects, effectiveDisplay.showClosed],
   )
+  const visibleCount = useMemo(() => new Set(baseRows.map((row) => row.id)).size, [baseRows])
+  const listLoading = isPending || (isFetching && visibleCount === 0)
+  // 仅浏览临时筛选后的展示为空时查询保存基底；Display 与当前展示一致，计数不累加分组。
+  const baselineParams = useMemo(() => encodeConds(saved.filters), [saved.filters])
+  const needsBaseline = !draft && viewReady && !viewQuery.isError && conds.length > 0 &&
+    isSuccess && !isFetching && visibleCount === 0 && !busy && !absorbing
+  const baselineQuery = useProjects(workspaceId, baselineParams, needsBaseline)
+  const baseline = useMemo(() => {
+    // 未成功、刷新中或保存交接期间不将缺失基底当作 0；空态先使用无数字的泛化提示。
+    if (!needsBaseline || !baselineQuery.isSuccess || baselineQuery.isFetching || !baselineQuery.data) return undefined
+    return {
+      rawCount: new Set(baselineQuery.data.map((row) => row.id)).size,
+      visibleCount: new Set(applyShowClosed(baselineQuery.data, effectiveDisplay.showClosed).map((row) => row.id)).size,
+    }
+  }, [needsBaseline, baselineQuery.isSuccess, baselineQuery.isFetching, baselineQuery.data, effectiveDisplay.showClosed])
+  const emptyState = viewReady && !viewQuery.isError && isSuccess && !listLoading
+    ? resolveListEmptyState({
+        editor: !!draft,
+        savedView: !!activeView,
+        hasTemporaryFilters: !draft && conds.length > 0,
+        rawCount: new Set((projects ?? []).map((row) => row.id)).size,
+        visibleCount,
+        baseline,
+      })
+    : null
   const orderedRows = useMemo(
     () => sortRows(baseRows, effectiveDisplay.orderField, effectiveDisplay.orderDir),
     [baseRows, effectiveDisplay.orderField, effectiveDisplay.orderDir],
@@ -537,26 +564,33 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
               {cols.map(headerCell)}
             </div>
 
-            {isLoading && (
+            {!viewQuery.isError && !isError && listLoading && (
               <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
             )}
             {isError && (
-              <p className="py-4 text-sm text-destructive">
+              <p role="alert" className="py-4 text-sm text-destructive">
                 {displayError(t, error, "errors.loadFailed")}
               </p>
             )}
-            {!isLoading && !isError && projects?.length === 0 && (
-              <p className="py-4 text-sm text-muted-foreground">
-                {effectiveConds.length > 0 ? t("filter.emptyResult") : t("project.empty")}
-              </p>
-            )}
-            {/* 取回有行但基底作用域清空（关闭态全隐藏）：专属空态提示 */}
-            {!isLoading && !isError && (projects?.length ?? 0) > 0 && baseRows.length === 0 && (
-              <p className="py-4 text-sm text-muted-foreground">{t("display.emptyHidden")}</p>
+            {/* 原始结果为空或关闭态全隐藏均由页面解释，仅基础空态提供创建入口。 */}
+            {emptyState && (
+              <ListEmptyState
+                state={emptyState}
+                entity="project"
+                disabled={busy || !!absorbing}
+                onCreate={() => openCreate()}
+                onEditFilters={activeView && !draft ? () => {
+                  if (busy || absorbing) return
+                  editView(activeView.id)
+                  setOpenPanel("filter")
+                } : undefined}
+                onAdjustFilters={() => setOpenPanel("filter")}
+                onClearTemporary={() => { if (!draft && !busy && !absorbing) setConds([]) }}
+                onAdjustDisplay={() => setOpenPanel("display")}
+              />
             )}
             {/* 分组值集（成员/标签清单）未就绪时不渲染分组，避免组序闪变 */}
-            {!isLoading &&
-              !isError &&
+            {viewReady && !viewQuery.isError && isSuccess && !listLoading && !emptyState &&
               baseRows.length > 0 &&
               (effectiveDisplay.grouping === "none" ? (
                 renderRows(orderedRows, 0)

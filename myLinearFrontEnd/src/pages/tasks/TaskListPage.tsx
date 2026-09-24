@@ -7,6 +7,8 @@ import { displayError } from "@/lib/errors"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
 import { decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
+import { displayedTaskRows } from "@/lib/views-task-stats"
+import { resolveListEmptyState } from "@/lib/list-empty-state"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useWorkspaceTasks } from "@/hooks/useTasks"
 import { useCreateView, useDeleteView, useUpdateView, useViews } from "@/hooks/useViews"
@@ -16,6 +18,7 @@ import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/dialog"
 import { ViewTabs } from "@/components/view/ViewTabs"
 import { ViewEditPanel } from "@/components/view/ViewEditPanel"
+import { ListEmptyState } from "@/components/view/ListEmptyState"
 import { FilterButton } from "@/components/filter/filter-menu"
 import { FilterChipRow } from "@/components/filter/filter-chips"
 import { TaskDisplayButton } from "@/components/display/task-display-menu"
@@ -120,7 +123,31 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
   const effectiveConds = draft?.filters ?? browseFilters
   const effectiveDisplay = draft?.display ?? display
   const fParams = useMemo(() => encodeConds(effectiveConds), [effectiveConds])
-  const { data: tasks, isLoading, isError, error } = useWorkspaceTasks(workspaceId, fParams, viewReady)
+  const { data: tasks, isPending, isFetching, isSuccess, isError, error } = useWorkspaceTasks(workspaceId, fParams, viewReady)
+  const visibleCount = useMemo(() => displayedTaskRows(tasks ?? [], effectiveDisplay).length, [tasks, effectiveDisplay])
+  const listLoading = isPending || (isFetching && visibleCount === 0)
+  // 基准保留当前预设或保存视图作用域，只移除浏览临时条件，使用相同 Display 按 ID 去重。
+  const baselineParams = useMemo(() => encodeConds(saved.filters), [saved.filters])
+  const needsBaseline = !draft && viewReady && !viewQuery.isError && conds.length > 0 &&
+    isSuccess && !isFetching && visibleCount === 0 && !busy && !absorbing
+  const baselineQuery = useWorkspaceTasks(workspaceId, baselineParams, needsBaseline)
+  const baseline = useMemo(() => {
+    if (!needsBaseline || !baselineQuery.isSuccess || baselineQuery.isFetching || !baselineQuery.data) return undefined
+    return {
+      rawCount: new Set(baselineQuery.data.map((row) => row.id)).size,
+      visibleCount: displayedTaskRows(baselineQuery.data, effectiveDisplay).length,
+    }
+  }, [needsBaseline, baselineQuery.isSuccess, baselineQuery.isFetching, baselineQuery.data, effectiveDisplay])
+  const emptyState = viewReady && !viewQuery.isError && isSuccess && !listLoading
+    ? resolveListEmptyState({
+        editor: !!draft,
+        savedView: !!activeView,
+        hasTemporaryFilters: !draft && conds.length > 0,
+        rawCount: new Set((tasks ?? []).map((row) => row.id)).size,
+        visibleCount,
+        baseline,
+      })
+    : null
   const displayChanged = !isSameTaskDisplay(display, saved.display)
   const deviatedViewIds = useMemo(() => new Set((views ?? []).filter((view) => {
     const state = view.id === activeViewId ? { filters: conds, display } : tabs[view.id]
@@ -396,30 +423,20 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
         )
       )}
 
-      <div hidden={!viewReady} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 scrollbar-gutter-stable">
-        {isLoading && <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>}
-        {isError && (
-          <p className="py-4 text-sm text-destructive">
+      <div hidden={!viewReady || viewQuery.isError} className="min-h-0 flex-1 overflow-y-auto px-6 py-6 scrollbar-gutter-stable">
+        {isError ? (
+          <p role="alert" className="py-4 text-sm text-destructive">
             {displayError(t, error, "task.loadFailed")}
           </p>
-        )}
-        {!isLoading && !isError && (tasks?.length ?? 0) === 0 && (
-          <div className="rounded-lg border border-dashed border-border p-10 text-center">
-            <p className="text-sm text-muted-foreground">
-              {draft || activeViewId || conds.length > 0 ? t("filter.emptyResult") : t("task.emptyFilter")}
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="mt-4"
-              onClick={() => openCreate(!draft && !activeViewId && tab === "backlog" ? "backlog" : "todo")}
-            >
-              <Plus />
-              {t("task.newTask")}
-            </Button>
-          </div>
-        )}
-        {(tasks?.length ?? 0) > 0 && (
+        ) : listLoading ? <p role="status" className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
+          : emptyState ? (
+            <ListEmptyState state={emptyState} entity="task" disabled={busy}
+              onCreate={() => openCreate(!activeViewId && tab === "backlog" ? "backlog" : "todo")}
+              onEditFilters={() => { if (activeView) editView(activeView.id); setOpenPanel("filter") }}
+              onAdjustFilters={() => setOpenPanel("filter")}
+              onClearTemporary={() => setEffectiveConds([])}
+              onAdjustDisplay={() => setOpenPanel("display")} />
+          ) : isSuccess && visibleCount > 0 && (
           <TaskGroupList
             tasks={tasks!}
             state={effectiveDisplay}

@@ -159,10 +159,21 @@ export function buildTaskTreeIndex(base: TaskRow[]): TaskTreeIndex {
 }
 
 /** 展示行集：showSubIssues 关 = 仅一级（父不在结果集的孤儿视为一级，避免行凭空消失）；开 = 全量 */
-export function taskDisplayRows(rows: TaskRow[], showSub: boolean): TaskRow[] {
-  if (showSub) return rows
-  const inSet = new Set(rows.map((r) => r.id))
-  return rows.filter((r) => !r.parentId || !inSet.has(r.parentId))
+export function taskDisplayRows(
+  rows: TaskRow[],
+  showSub: boolean,
+  matchIds?: ReadonlySet<string>,
+): TaskRow[] {
+  const inSet = showSub ? undefined : new Set(rows.map((r) => r.id))
+  const displayed = inSet ? rows.filter((r) => !r.parentId || !inSet.has(r.parentId)) : rows
+  // 钻取只能裁展示锚点，不能提前裁 rows，否则关闭子任务时会把隐藏子节点误提为根。
+  if (matchIds === undefined) return displayed
+  const seen = new Set<string>()
+  return displayed.filter((r) => {
+    if (!matchIds.has(r.id) || seen.has(r.id)) return false
+    seen.add(r.id)
+    return true
+  })
 }
 
 /** tree 模式渲染集（Linear 规则④，2026-09-14 用户 Linear 验证定稿）：kept = 锚点祖先链 ∪ 锚点完整子树。
@@ -204,6 +215,27 @@ export function taskSpanKeptSet(
 /** kept 集的树根 = 父不在 kept 的 kept 节点（含真一级 + 孤儿提根，孤儿仍置灰） */
 export function taskKeptRoots(base: TaskRow[], kept: ReadonlySet<string>): TaskRow[] {
   return base.filter((r) => kept.has(r.id) && (!r.parentId || !kept.has(r.parentId)))
+}
+
+/** 树上下文灰显：独立钻取与原组路径、完结链条、孤儿规则叠加；无分组也要检查钻取命中。 */
+export function taskTreeRowDimmed(
+  task: TaskRow,
+  state: TaskDisplayState,
+  parentOf: ReadonlyMap<string, string>,
+  path: readonly { field: TaskGroupField; value: string }[],
+  matchIds?: ReadonlySet<string>,
+): boolean {
+  return (
+    (!!task.parentId && !parentOf.has(task.parentId)) ||
+    (state.showCompleted === "none" && isTaskCompleted(task)) ||
+    (matchIds !== undefined && !matchIds.has(task.id)) ||
+    path.some((p) => !taskRowGroupValues(task, p.field).includes(p.value))
+  )
+}
+
+/** 仅当前组计数小于同路径保存基准时显示比例，扩大的结果和未传基准均只显示当前数。 */
+export function taskGroupCountText(current: number, baseline?: number): string {
+  return baseline !== undefined && current < baseline ? `${current}/${baseline}` : String(current)
 }
 
 // ---- 排序引擎 ----

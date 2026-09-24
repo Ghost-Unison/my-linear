@@ -8,9 +8,11 @@ export const listViews = (
   workspaceId: string,
   surface: ViewSurface,
   projectId?: string,
+  entityType?: "task" | "project",
 ) => {
   const qs = new URLSearchParams({ surface })
   if (projectId) qs.set("projectId", projectId)
+  if (entityType) qs.set("entityType", entityType)
   return api<View[]>(`/workspaces/${workspaceId}/views?${qs.toString()}`)
 }
 

@@ -109,6 +109,23 @@ export function decodeTaskDisplay(raw: unknown): TaskDisplayState {
   }
 }
 
+/** 保存吸收仅移除本次提交的条件实例数，保留等待期间新增或改写的临时条件。 */
+export function remainingViewFilters(current: FilterCond[], submitted: FilterCond[]): FilterCond[] {
+  const keyOf = (f: FilterCond) => JSON.stringify([f.field, f.op, [...f.values].sort()])
+  const counts = new Map<string, number>()
+  for (const condition of submitted) {
+    const key = keyOf(condition)
+    counts.set(key, (counts.get(key) ?? 0) + 1)
+  }
+  return current.filter((condition) => {
+    const key = keyOf(condition)
+    const count = counts.get(key) ?? 0
+    if (!count) return true
+    counts.set(key, count - 1)
+    return false
+  })
+}
+
 /** 前端快照 → config（写入 view.config；深拷贝防引用共享） */
 export function encodeProjectConfig(
   filters: FilterCond[],

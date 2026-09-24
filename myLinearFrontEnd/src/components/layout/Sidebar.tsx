@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link, NavLink, useParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { ChevronRight, Folder, Home, ListTodo, Plus } from "lucide-react"
+import { ChevronRight, Folder, Home, Layers, ListTodo, Plus } from "lucide-react"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { cn } from "@/lib/utils"
 import { WorkspaceAvatar } from "@/components/ui/avatar"
@@ -88,6 +88,7 @@ function WorkspaceNode({
     { to: `/w/${workspace.id}/home`, label: t("nav.home"), icon: Home },
     { to: `/w/${workspace.id}/projects`, label: t("nav.projects"), icon: Folder },
     { to: `/w/${workspace.id}/tasks`, label: t("nav.tasks"), icon: ListTodo },
+    { to: `/w/${workspace.id}/views`, label: t("nav.views"), icon: Layers },
   ]
 
   return (
