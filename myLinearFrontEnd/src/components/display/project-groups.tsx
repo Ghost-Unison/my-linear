@@ -155,11 +155,14 @@ const groupInitial = (field: GroupField, value: string): CreateProjectInitial =>
  *  collapsed 键 = 组路径（一级 field:value，二级拼父路径），纯内存刷新重置 */
 export function ProjectGroupTree({
   groups,
+  baselineGroups,
   meta,
   renderRows,
   onAdd,
 }: {
   groups: GroupNode[]
+  /** 可选同 Display 基准，仅匹配完整组路径计数，不补组或行；缺省保持原计数。 */
+  baselineGroups?: GroupNode[]
   meta: (field: GroupField, value: string) => GroupValueMeta
   renderRows: (rows: ProjectRow[], depth: number) => ReactNode
   onAdd?: (initial: CreateProjectInitial) => void
@@ -175,6 +178,7 @@ export function ProjectGroupTree({
   return (
     <GroupLevel
       groups={groups}
+      baselineGroups={baselineGroups}
       depth={1}
       meta={meta}
       renderRows={renderRows}
@@ -189,6 +193,7 @@ export function ProjectGroupTree({
 
 function GroupLevel({
   groups,
+  baselineGroups,
   depth,
   meta,
   renderRows,
@@ -199,6 +204,7 @@ function GroupLevel({
   inherited,
 }: {
   groups: GroupNode[]
+  baselineGroups?: GroupNode[]
   depth: 1 | 2
   meta: (field: GroupField, value: string) => GroupValueMeta
   renderRows: (rows: ProjectRow[], depth: number) => ReactNode
@@ -215,6 +221,11 @@ function GroupLevel({
         const m = meta(g.field, g.value)
         const key = `${parentKey}${g.field}:${g.value}`
         const isCollapsed = !!collapsed[key]
+        // 只在父路径匹配的基准子树中查找；一级 rows 已包含完整归属，不累加多值子组。
+        const baseline = baselineGroups?.find((node) => node.field === g.field && node.value === g.value)
+        const count = baselineGroups === undefined ? groupCount(g) : new Set(g.rows.map((row) => row.id)).size
+        const baseCount = baseline ? new Set(baseline.rows.map((row) => row.id)).size : undefined
+        const countText = baseCount !== undefined && count < baseCount ? `${count}/${baseCount}` : count
         // ⑤ 预填 = 组路径累积（二级组含一级值；NONE 组仅继承）
         const merged = { ...inherited, ...groupInitial(g.field, g.value) }
         const addLabel = t("project.newProjectIn", { group: m.label })
@@ -232,7 +243,7 @@ function GroupLevel({
                 />
                 {m.icon}
                 <span className="truncate text-sm font-medium text-foreground">{m.label}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{groupCount(g)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{countText}</span>
                 {onAdd && (
                   <AddButton
                     className="ml-auto bg-surface-2"
@@ -253,7 +264,7 @@ function GroupLevel({
                 />
                 {m.icon}
                 <span className="shrink-0 truncate text-sm font-medium text-foreground">{m.label}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{groupCount(g)}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">{countText}</span>
                 <span className="mx-2 h-px flex-1 bg-border" />
                 {onAdd && (
                   <AddButton
@@ -268,6 +279,7 @@ function GroupLevel({
               (g.children.length > 0 ? (
                 <GroupLevel
                   groups={g.children}
+                  baselineGroups={baselineGroups === undefined ? undefined : baseline?.children ?? []}
                   depth={2}
                   meta={meta}
                   renderRows={renderRows}

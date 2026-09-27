@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react"
 import { Tabs } from "radix-ui"
 import { Box, Layers, MoreHorizontal, Pencil, Trash2, UserRound } from "lucide-react"
 import { useTranslation } from "react-i18next"
-import type { View } from "@/api/types"
+import type { View, ViewEntityType } from "@/api/types"
 import { NONE } from "@/lib/filter-state"
-import type { ViewTaskBucket, ViewTaskDimension, ViewTaskSelection } from "@/lib/views-task-stats"
+import type { ViewTaskBucket } from "@/lib/views-task-stats"
+import type { WorkspaceViewDimension } from "@/lib/workspace-view-state"
 import { cn } from "@/lib/utils"
 import { RoundIconButton } from "@/components/ui/round-icon-button"
 import { MemberAvatar, WorkspaceAvatar } from "@/components/ui/avatar"
@@ -48,24 +49,34 @@ export function ViewActions({ onEdit, onDelete, disabled, active = true, onInact
   )
 }
 
-const dimensions: { value: ViewTaskDimension; label: string }[] = [
-  { value: "assignee", label: "viewsPage.assignees" },
-  { value: "label", label: "viewsPage.labels" },
-  { value: "project", label: "viewsPage.projects" },
-]
+const dimensionsByEntity: Record<ViewEntityType, { value: WorkspaceViewDimension; label: string }[]> = {
+  task: [
+    { value: "assignee", label: "viewsPage.assignees" },
+    { value: "label", label: "viewsPage.labels" },
+    { value: "project", label: "viewsPage.projects" },
+  ],
+  project: [
+    { value: "lead", label: "viewsPage.leads" },
+    { value: "member", label: "viewsPage.members" },
+    { value: "label", label: "viewsPage.labels" },
+  ],
+}
 
-export function ViewDetailsSidebar({ view, workspaceName, dimension, selection, buckets, loading, failed,
+type SidebarSelection = { dimension: WorkspaceViewDimension; value: string }
+
+export function ViewDetailsSidebar({ view, entityType, workspaceName, dimension, selection, buckets, loading, failed,
   onDimension, onSelection, onEdit, onDelete, disabled, active = true, onInactiveFocus,
 }: {
   view: View
+  entityType: ViewEntityType
   workspaceName: string
-  dimension: ViewTaskDimension
-  selection: ViewTaskSelection | null
+  dimension: WorkspaceViewDimension
+  selection: SidebarSelection | null
   buckets: ViewTaskBucket[]
   loading: boolean
   failed: boolean
-  onDimension: (value: ViewTaskDimension) => void
-  onSelection: (value: ViewTaskSelection | null) => void
+  onDimension: (value: WorkspaceViewDimension) => void
+  onSelection: (value: SidebarSelection | null) => void
   onEdit: () => void
   onDelete: () => void
   disabled: boolean
@@ -73,6 +84,8 @@ export function ViewDetailsSidebar({ view, workspaceName, dimension, selection, 
   onInactiveFocus?: () => void
 }) {
   const { t } = useTranslation()
+  const dimensions = dimensionsByEntity[entityType]
+  const seeRowsKey = entityType === "project" ? "viewsPage.seeProjects" : "viewsPage.seeTasks"
   return (
     <aside aria-label={t("view.details")} className="flex h-full w-80 shrink-0 flex-col gap-3 overflow-y-auto pb-4 xl:w-96">
       <section className="rounded-lg border border-border bg-surface-1 p-4">
@@ -88,7 +101,10 @@ export function ViewDetailsSidebar({ view, workspaceName, dimension, selection, 
         <WorkspaceAvatar name={workspaceName} />
         <span className="truncate" title={workspaceName}>{workspaceName}</span>
       </section>
-      <Tabs.Root value={dimension} onValueChange={(value) => onDimension(value as ViewTaskDimension)}
+      <Tabs.Root value={dimension} onValueChange={(value) => {
+        const next = dimensions.find((item) => item.value === value)
+        if (next) onDimension(next.value)
+      }}
         className="min-h-64 flex-1 rounded-lg border border-border bg-surface-1 p-3">
         <Tabs.List aria-label={t("view.details")} className="flex items-center gap-1.5">
           {dimensions.map((item) => (
@@ -100,26 +116,30 @@ export function ViewDetailsSidebar({ view, workspaceName, dimension, selection, 
         </Tabs.List>
         <Tabs.Content value={dimension} className="mt-3 flex flex-col gap-1 outline-none">
           {loading ? <p role="status" className="p-4 text-center text-sm text-muted-foreground">{t("common.loading")}</p>
-            : failed ? <p role="alert" className="p-4 text-sm text-destructive">{t("task.loadFailed")}</p>
+            : failed ? <p role="alert" className="p-4 text-sm text-destructive">{t(entityType === "project" ? "project.loadFailed" : "task.loadFailed")}</p>
             : buckets.length === 0 ? <p className="p-4 text-center text-sm text-muted-foreground">
               {t(dimension === "label" ? "viewsPage.noLabelsUsed" : "filter.emptyResult")}
             </p> : buckets.map((bucket) => {
               const selected = selection?.dimension === dimension && selection.value === bucket.value
-              const label = bucket.value === NONE
-                ? t(dimension === "assignee" ? "filter.noAssignee" : "task.noProject") : bucket.name
+              // NONE 桶文案按维度取对应命名空间：lead 用 project.noLead（非 filter 段），label 兜底 noLabels。
+              const noneLabelKey = dimension === "assignee" ? "filter.noAssignee"
+                : dimension === "lead" ? "project.noLead"
+                  : dimension === "member" ? "display.noMember"
+                    : dimension === "label" ? "filter.noLabels" : "task.noProject"
+              const label = bucket.value === NONE ? t(noneLabelKey) : bucket.name
               return (
                 <button key={bucket.value} type="button" disabled={disabled} aria-pressed={selected}
-                  aria-label={`${label} · ${bucket.count}`} title={t(selected ? "viewsPage.clearFilter" : "viewsPage.seeTasks")}
+                  aria-label={`${label} · ${bucket.count}`} title={t(selected ? "viewsPage.clearFilter" : seeRowsKey)}
                   onClick={() => onSelection(selected ? null : { dimension, value: bucket.value })}
                   className={cn("group flex items-center gap-2 rounded-lg px-3 py-3 text-left text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                     selected && "bg-accent", selection && !selected && "text-muted-foreground")}>
-                  {dimension === "assignee" ? (bucket.value === NONE ? <UserRound className="size-4 shrink-0" />
+                  {dimension === "assignee" || dimension === "lead" || dimension === "member" ? (bucket.value === NONE ? <UserRound className="size-4 shrink-0" />
                     : <MemberAvatar name={label} color={bucket.color} />)
                     : dimension === "label" ? <LabelDot color={bucket.color ?? "#808080"} />
                       : <Box className="size-4 shrink-0" />}
                   <span className="min-w-0 flex-1 truncate">{label}</span>
                   <span className="hidden shrink-0 text-xs group-hover:inline group-focus-visible:inline">
-                    {t(selected ? "viewsPage.clearFilter" : "viewsPage.seeTasks")}
+                    {t(selected ? "viewsPage.clearFilter" : seeRowsKey)}
                   </span>
                   <span className="shrink-0 tabular-nums text-muted-foreground">{bucket.count}</span>
                 </button>

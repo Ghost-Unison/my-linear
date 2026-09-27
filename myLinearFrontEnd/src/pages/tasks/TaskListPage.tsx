@@ -430,22 +430,22 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
           </p>
         ) : listLoading ? <p role="status" className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
           : emptyState ? (
-            <ListEmptyState state={emptyState} entity="task" disabled={busy}
+            <ListEmptyState state={emptyState} entity="task" disabled={busy || !!absorbing}
               onCreate={() => openCreate(!activeViewId && tab === "backlog" ? "backlog" : "todo")}
               onEditFilters={() => { if (activeView) editView(activeView.id); setOpenPanel("filter") }}
               onAdjustFilters={() => setOpenPanel("filter")}
               onClearTemporary={() => setEffectiveConds([])}
               onAdjustDisplay={() => setOpenPanel("display")} />
           ) : isSuccess && visibleCount > 0 && (
-          <TaskGroupList
-            tasks={tasks!}
-            state={effectiveDisplay}
-            workspaceId={workspaceId!}
-            onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
-            onNewTask={openCreate}
-            onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}
-          />
-        )}
+            <TaskGroupList
+              tasks={tasks!}
+              state={effectiveDisplay}
+              workspaceId={workspaceId!}
+              onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
+              onNewTask={openCreate}
+              onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}
+            />
+          )}
       </div>
 
       <ConfirmDialog

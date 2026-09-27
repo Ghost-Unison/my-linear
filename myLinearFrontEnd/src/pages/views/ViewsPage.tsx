@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
 import { Tabs } from "radix-ui"
 import { ArrowDown, ArrowUp, Layers, Plus } from "lucide-react"
 import { useViews } from "@/hooks/useViews"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
-import { newTaskDisplay } from "@/lib/task-display-state"
+import { newWorkspaceViewDraft, PROJECT_VIEW_ENTITY, TASK_VIEW_ENTITY } from "@/lib/workspace-view-state"
 import { writeConds } from "@/lib/filter-state"
 import { PageHeader } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
@@ -15,7 +15,7 @@ import {
   ViewsDisplayButton,
   orderViewsDirectory,
 } from "@/components/display/views-display-menu"
-import { useViewsSession, type ViewDirectoryDisplay } from "./ViewsLayout"
+import { notifyViewsSession, useViewsSession, type ViewDirectoryDisplay } from "./ViewsLayout"
 
 /** 目录设置只写父级会话，不参与任何视图的 config 或任务 Display。 */
 export function ViewsPage() {
@@ -26,9 +26,10 @@ export function ViewsPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const urlTab = searchParams.get("tab")
   const tab = urlTab === "tasks" ? "task" : urlTab === "projects" ? "project" : session.tab
-  const [display, setDisplay] = useState(() => session.directory)
+  const entitySession = session[tab]
+  const display = entitySession.directory
   const { data: workspaces } = useWorkspaces()
-  const query = useViews(tab === "task" ? workspaceId : undefined, "views_page", undefined, "task")
+  const query = useViews(workspaceId, "views_page", undefined, tab)
   const workspaceName = workspaces?.find((workspace) => workspace.id === workspaceId)?.name ??
     t("common.workspaceFallback")
 
@@ -54,24 +55,25 @@ export function ViewsPage() {
     })
   }
   const changeDisplay = (next: ViewDirectoryDisplay) => {
-    session.directory = next
-    setDisplay(next)
+    entitySession.directory = next
+    notifyViewsSession(session)
   }
   const create = () => {
-    if (tab !== "task" || !workspaceId || session.pending.new) return
-    session.creation = { draft: { name: "", description: "", filters: [], display: newTaskDisplay() } }
-    navigate(`/w/${workspaceId}/views/new`)
+    if (!workspaceId || entitySession.pending.new) return
+    if (tab === "project") session.project.creation = { draft: newWorkspaceViewDraft(PROJECT_VIEW_ENTITY) }
+    else session.task.creation = { draft: newWorkspaceViewDraft(TASK_VIEW_ENTITY) }
+    navigate(`/w/${workspaceId}/views/new${tab === "project" ? "?type=project" : ""}`)
   }
   const viewUrl = (id: string) => {
     const sp = new URLSearchParams()
-    writeConds(sp, session.browses[id]?.filters ?? [])
+    writeConds(sp, entitySession.browses[id]?.filters ?? [])
     return `/w/${workspaceId}/views/${id}${sp.size ? `?${sp}` : ""}`
   }
   const columns = VIEWS_DIRECTORY_COLUMNS.filter((column) =>
     column.key === "name" || column.key === display.orderField || display.visible[column.key])
   const rows = useMemo(() => {
     const result = (query.data ?? []).filter((view) =>
-      view.workspaceId === workspaceId && view.surface === "views_page" && view.entityType === "task")
+      view.workspaceId === workspaceId && view.surface === "views_page" && view.entityType === tab)
     const field = display.orderField
     const direction = display.orderDir === "asc" ? 1 : -1
     return result.sort((a, b) => {
@@ -80,7 +82,7 @@ export function ViewsPage() {
         : (Date.parse(a[field]) || 0) - (Date.parse(b[field]) || 0)
       return compare * direction || a.id.localeCompare(b.id)
     })
-  }, [query.data, workspaceId, display.orderField, display.orderDir, i18n.language])
+  }, [query.data, workspaceId, tab, display.orderField, display.orderDir, i18n.language])
   const dateFormatter = useMemo(() => new Intl.DateTimeFormat(i18n.language, {
     year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
   }), [i18n.language])
@@ -111,15 +113,15 @@ export function ViewsPage() {
         }
         actions={
           <>
-            <Button size="sm" variant="ghost" onClick={create} disabled={tab !== "task" || !workspaceId || !!session.pending.new}>
+            <Button size="sm" variant="ghost" onClick={create} disabled={!workspaceId || !!entitySession.pending.new}>
               <Plus data-icon="inline-start" />
               {t("view.newView")}
             </Button>
-            {tab === "task" && <ViewsDisplayButton state={display} onChange={changeDisplay} />}
+            <ViewsDisplayButton key={tab} state={display} onChange={changeDisplay} />
           </>
         }
       />
-      <Tabs.Content value="task" className="min-h-0 flex-1 overflow-auto outline-none">
+      <Tabs.Content key={tab} value={tab} className="min-h-0 flex-1 overflow-auto outline-none">
         {query.isPending ? (
           <p role="status" className="px-6 py-10 text-sm text-muted-foreground">{t("common.loading")}</p>
         ) : query.isError ? (
@@ -130,9 +132,9 @@ export function ViewsPage() {
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center gap-3 px-6 py-20 text-center">
             <Layers className="size-8 text-muted-foreground" aria-hidden="true" />
-            <h2 className="text-sm font-medium">{t("viewsPage.emptyTitle")}</h2>
-            <p className="max-w-md text-sm text-muted-foreground">{t("viewsPage.emptyDescription")}</p>
-            <Button size="sm" variant="secondary" onClick={create} disabled={!!session.pending.new}>
+            <h2 className="text-sm font-medium">{t(tab === "project" ? "viewsPage.emptyProjectTitle" : "viewsPage.emptyTitle")}</h2>
+            <p className="max-w-md text-sm text-muted-foreground">{t(tab === "project" ? "viewsPage.emptyProjectDescription" : "viewsPage.emptyDescription")}</p>
+            <Button size="sm" variant="secondary" onClick={create} disabled={!!entitySession.pending.new}>
               <Plus data-icon="inline-start" />{t("view.newView")}
             </Button>
           </div>
@@ -191,9 +193,6 @@ export function ViewsPage() {
             </tbody>
           </table>
         )}
-      </Tabs.Content>
-      <Tabs.Content value="project" className="min-h-0 flex-1 overflow-auto px-6 py-20 text-center text-sm text-muted-foreground outline-none">
-        {t("viewsPage.comingSoon")}
       </Tabs.Content>
     </Tabs.Root>
   )

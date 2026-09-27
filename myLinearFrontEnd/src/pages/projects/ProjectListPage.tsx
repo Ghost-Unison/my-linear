@@ -1,41 +1,23 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useTranslation } from "react-i18next"
-import { ArrowDown, ArrowUp, Box, Plus } from "lucide-react"
-import type { ProjectRow, View } from "@/api/types"
+import { Plus } from "lucide-react"
+import type { View } from "@/api/types"
 import { useProjects } from "@/hooks/useProjects"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useCreateView, useDeleteView, useUpdateView, useViews } from "@/hooks/useViews"
-import { colorFor } from "@/lib/color"
 import { displayError } from "@/lib/errors"
 import { resolveListEmptyState } from "@/lib/list-empty-state"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
-import {
-  applyShowClosed,
-  buildGroups,
-  gridTemplateCols,
-  isSameDisplay,
-  orderFieldColumn,
-  sortRows,
-  tableMinRem,
-  visibleColumns,
-  type ColumnDef,
-  type OrderField,
-  type ProjectColumn,
-  type ProjectDisplayState,
-} from "@/lib/display-state"
+import { applyShowClosed, isSameDisplay, type ProjectDisplayState } from "@/lib/display-state"
 import {
   decodeProjectConfig,
   encodeProjectConfig,
   type ProjectViewSnapshot,
 } from "@/lib/view-state"
-import { cn } from "@/lib/utils"
-import { MemberAvatar } from "@/components/ui/avatar"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ConfirmDialog } from "@/components/ui/dialog"
-import { LabelDot } from "@/components/ui/label-options"
-import { PriorityIcon, usePriorityLabel } from "@/components/ui/priority-icon"
 import { PageHeader } from "@/components/layout/PageHeader"
 import { FilterButton } from "@/components/filter/filter-menu"
 import { FilterChipRow } from "@/components/filter/filter-chips"
@@ -43,12 +25,8 @@ import { DisplayButton } from "@/components/display/display-menu"
 import { ViewTabs } from "@/components/view/ViewTabs"
 import { ViewEditPanel } from "@/components/view/ViewEditPanel"
 import { ListEmptyState } from "@/components/view/ListEmptyState"
-import { fmtDay, ProjectGroupTree, useGroupValueMeta } from "@/components/display/project-groups"
+import { ProjectViewList } from "@/components/project/ProjectViewList"
 import { CreateProjectDialog, type CreateProjectInitial } from "@/components/project/CreateProjectDialog"
-import {
-  ProjectStatusIcon,
-  useProjectStatusLabel,
-} from "@/components/project/project-status"
 
 /** 当前编辑沙箱（P2.md §1.9）：已有 View 草稿按 id 暂存；新建草稿仅随当前 panel 存活。 */
 interface ViewDraft {
@@ -74,7 +52,7 @@ export function ProjectListPage() {
 }
 
 function ProjectListContent({ workspaceId }: { workspaceId: string }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   // 浏览 URL 的 f= 仅承载临时条件；view= 指向保存的基底，取数时才合成 AND。
@@ -302,18 +280,6 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
     })
   }
 
-  // 列配置单源：可见列 → 网格模板 / 保底宽（inline style，Tailwind JIT 编译不到动态 arbitrary class）
-  const cols = useMemo(() => visibleColumns(effectiveDisplay), [effectiveDisplay])
-  const gridStyle = useMemo<CSSProperties>(
-    () => ({ gridTemplateColumns: gridTemplateCols(cols) }),
-    [cols],
-  )
-  const minWStyle = useMemo<CSSProperties>(
-    () => ({ minWidth: `${tableMinRem(cols)}rem` }),
-    [cols],
-  )
-
-  const { ready, ctx, meta } = useGroupValueMeta(workspaceId!, effectiveDisplay)
   // 基底管线：showClosed（基底 AND：filter 取回但关闭态前端隐藏）→ ordering → 分组
   const baseRows = useMemo(
     () => applyShowClosed(projects ?? [], effectiveDisplay.showClosed),
@@ -344,83 +310,6 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
         baseline,
       })
     : null
-  const orderedRows = useMemo(
-    () => sortRows(baseRows, effectiveDisplay.orderField, effectiveDisplay.orderDir),
-    [baseRows, effectiveDisplay.orderField, effectiveDisplay.orderDir],
-  )
-  const groups = useMemo(
-    () =>
-      effectiveDisplay.grouping !== "none" && ready
-        ? buildGroups(orderedRows, effectiveDisplay, ctx)
-        : [],
-    [orderedRows, effectiveDisplay, ctx, ready],
-  )
-
-  // 表头排序联动（用户定案 6）：点列头 = 写 ordering 状态；同列翻方向，新列复位 asc + 自动勾选对应列
-  const toggleOrder = (field: OrderField) => {
-    if (effectiveDisplay.orderField === field) {
-      setEffectiveDisplay({
-        ...effectiveDisplay,
-        orderDir: effectiveDisplay.orderDir === "asc" ? "desc" : "asc",
-      })
-    } else {
-      const col = orderFieldColumn(field)
-      setEffectiveDisplay({
-        ...effectiveDisplay,
-        orderField: field,
-        orderDir: "asc",
-        ...(col && !effectiveDisplay.visible[col]
-          ? { visible: { ...effectiveDisplay.visible, [col]: true } }
-          : {}),
-      })
-    }
-  }
-
-  const openRow = (p: ProjectRow) => navigate(`/w/${workspaceId}/projects/${p.id}`)
-  const renderRows = (rows: ProjectRow[], depth: number) =>
-    rows.map((p) => (
-      <ProjectListRow
-        key={p.id}
-        project={p}
-        cols={cols}
-        gridStyle={gridStyle}
-        depth={depth}
-        lang={i18n.language}
-        onOpen={() => openRow(p)}
-      />
-    ))
-
-  const headerCell = (c: ColumnDef) => {
-    const label = t(c.labelKey)
-    // 无 ordering 映射的列（Lead/Members/Labels/Issues）不可点
-    if (!c.orderField) {
-      return (
-        <span key={c.key} className={c.alignRight ? "text-right" : undefined}>
-          {label}
-        </span>
-      )
-    }
-    const active = effectiveDisplay.orderField === c.orderField
-    return (
-      <button
-        key={c.key}
-        onClick={() => toggleOrder(c.orderField!)}
-        className={cn(
-          "flex items-center gap-1 text-left transition-colors hover:text-foreground",
-          active && "text-foreground",
-          c.alignRight && "justify-end",
-        )}
-      >
-        {label}
-        {active &&
-          (effectiveDisplay.orderDir === "asc" ? (
-            <ArrowUp className="size-3" />
-          ) : (
-            <ArrowDown className="size-3" />
-          ))}
-      </button>
-    )
-  }
 
   return (
     <div className="flex h-full flex-col">
@@ -540,71 +429,44 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
         {/* 横向滚动容器 = 撑满到视口底的 h-full 层：列溢出时横向滚动条贴在右侧内容区（视口）
             底部而非表格底部（对齐 Linear）；min-w 撑开 grid 防 Name 列被压成 0 宽，pb-6 留底部呼吸 */}
         <div className="h-full overflow-auto">
-          <div style={minWStyle} className="pb-6">
-            <div
-              style={gridStyle}
-              className="mt-2 grid gap-4 pb-2 text-xs font-medium text-muted-foreground"
-            >
-              {/* Name 列头：可点 = ordering name（Linear 同位箭头联动） */}
-              <button
-                onClick={() => toggleOrder("name")}
-                className={cn(
-                  "flex items-center gap-1 text-left transition-colors hover:text-foreground",
-                  effectiveDisplay.orderField === "name" && "text-foreground",
+          <ProjectViewList
+            projects={projects ?? []}
+            state={effectiveDisplay}
+            workspaceId={workspaceId}
+            onChange={setEffectiveDisplay}
+            onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}
+            onNewProject={openCreate}
+            content={viewReady && !viewQuery.isError && isSuccess && !listLoading && !emptyState &&
+              baseRows.length > 0 ? undefined : (
+              <>
+                {!viewQuery.isError && !isError && listLoading && (
+                  <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
                 )}
-              >
-                {t("common.name")}
-                {effectiveDisplay.orderField === "name" &&
-                  (effectiveDisplay.orderDir === "asc" ? (
-                    <ArrowUp className="size-3" />
-                  ) : (
-                    <ArrowDown className="size-3" />
-                  ))}
-              </button>
-              {cols.map(headerCell)}
-            </div>
-
-            {!viewQuery.isError && !isError && listLoading && (
-              <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
+                {isError && (
+                  <p role="alert" className="py-4 text-sm text-destructive">
+                    {displayError(t, error, "errors.loadFailed")}
+                  </p>
+                )}
+                {/* 原始结果为空或关闭态全隐藏均由页面解释，仅基础空态提供创建入口。 */}
+                {emptyState && (
+                  <ListEmptyState
+                    state={emptyState}
+                    entity="project"
+                    disabled={busy || !!absorbing}
+                    onCreate={() => openCreate()}
+                    onEditFilters={activeView && !draft ? () => {
+                      if (busy || absorbing) return
+                      editView(activeView.id)
+                      setOpenPanel("filter")
+                    } : undefined}
+                    onAdjustFilters={() => setOpenPanel("filter")}
+                    onClearTemporary={() => { if (!draft && !busy && !absorbing) setConds([]) }}
+                    onAdjustDisplay={() => setOpenPanel("display")}
+                  />
+                )}
+              </>
             )}
-            {isError && (
-              <p role="alert" className="py-4 text-sm text-destructive">
-                {displayError(t, error, "errors.loadFailed")}
-              </p>
-            )}
-            {/* 原始结果为空或关闭态全隐藏均由页面解释，仅基础空态提供创建入口。 */}
-            {emptyState && (
-              <ListEmptyState
-                state={emptyState}
-                entity="project"
-                disabled={busy || !!absorbing}
-                onCreate={() => openCreate()}
-                onEditFilters={activeView && !draft ? () => {
-                  if (busy || absorbing) return
-                  editView(activeView.id)
-                  setOpenPanel("filter")
-                } : undefined}
-                onAdjustFilters={() => setOpenPanel("filter")}
-                onClearTemporary={() => { if (!draft && !busy && !absorbing) setConds([]) }}
-                onAdjustDisplay={() => setOpenPanel("display")}
-              />
-            )}
-            {/* 分组值集（成员/标签清单）未就绪时不渲染分组，避免组序闪变 */}
-            {viewReady && !viewQuery.isError && isSuccess && !listLoading && !emptyState &&
-              baseRows.length > 0 &&
-              (effectiveDisplay.grouping === "none" ? (
-                renderRows(orderedRows, 0)
-              ) : ready ? (
-                <ProjectGroupTree
-                  groups={groups}
-                  meta={meta}
-                  renderRows={renderRows}
-                  onAdd={openCreate}
-                />
-              ) : (
-                <p className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
-              ))}
-          </div>
+          />
         </div>
       </div>
 
@@ -626,148 +488,4 @@ function ProjectListContent({ workspaceId }: { workspaceId: string }) {
       />
     </div>
   )
-}
-
-/** 行内缩进：不分组 0 / 一级组内 1 / 二级组内 2（name 单元格 padding 递增） */
-const DEPTH_PL = ["", "pl-6", "pl-10"]
-
-function ProjectListRow({
-  project: p,
-  cols,
-  gridStyle,
-  depth,
-  lang,
-  onOpen,
-}: {
-  project: ProjectRow
-  cols: ColumnDef[]
-  gridStyle: CSSProperties
-  depth: number
-  lang: string
-  onOpen: () => void
-}) {
-  return (
-    <div
-      onClick={onOpen}
-      onKeyDown={(e) => e.key === "Enter" && onOpen()}
-      tabIndex={0}
-      title={p.name}
-      style={gridStyle}
-      className={cn(
-        "group grid cursor-pointer items-center gap-4 py-2 transition-colors hover:bg-accent/50",
-      )}
-    >
-      {/* 项目无 icon/color 字段，图标底色按名字散列取确定性颜色（同头像约定） */}
-      <span className={cn("flex min-w-0 items-center gap-2.5", DEPTH_PL[depth])}>
-        <span
-          className="flex size-5 shrink-0 items-center justify-center rounded"
-          style={{ backgroundColor: colorFor(p.name) }}
-        >
-          <Box className="size-3 text-white" />
-        </span>
-        <span className="truncate text-sm">{p.name}</span>
-      </span>
-      {cols.map((c) => (
-        <ProjectCell key={c.key} column={c.key} project={p} lang={lang} />
-      ))}
-    </div>
-  )
-}
-
-/** 列单元格渲染（配置化单源）：与 COLUMNS 定义一一对应 */
-function ProjectCell({
-  column,
-  project: p,
-  lang,
-}: {
-  column: ProjectColumn
-  project: ProjectRow
-  lang: string
-}) {
-  const statusLabel = useProjectStatusLabel()
-  const priorityLabel = usePriorityLabel()
-  switch (column) {
-    case "status":
-      return (
-        <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <ProjectStatusIcon status={p.status} />
-          {statusLabel(p.status)}
-        </span>
-      )
-    case "priority":
-      return (
-        <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <PriorityIcon value={p.priority} />
-          {priorityLabel(p.priority)}
-        </span>
-      )
-    case "lead":
-      return (
-        <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          {p.lead ? (
-            <>
-              <MemberAvatar name={p.lead.name} color={p.lead.avatarColor || undefined} />
-              <span className="truncate">{p.lead.name}</span>
-            </>
-          ) : (
-            "—"
-          )}
-        </span>
-      )
-    case "members": {
-      if (p.members.length === 0)
-        return <span className="text-sm text-muted-foreground">—</span>
-      // 头像叠放最多 3 枚，其余折叠 +N（列定宽防溢出）
-      const shown = p.members.slice(0, 3)
-      const rest = p.members.length - shown.length
-      return (
-        <span className="flex items-center text-sm text-muted-foreground">
-          {shown.map((m, i) => (
-            <span key={m.id} className={i > 0 ? "-ml-1.5" : undefined}>
-              <MemberAvatar name={m.name} color={m.avatarColor || undefined} />
-            </span>
-          ))}
-          {rest > 0 && <span className="ml-1.5 text-xs">+{rest}</span>}
-        </span>
-      )
-    }
-    case "labels": {
-      if (p.labels.length === 0)
-        return <span className="text-sm text-muted-foreground">—</span>
-      // 最多完整展示 2 枚，其余折叠 +N
-      const shown = p.labels.slice(0, 2)
-      const rest = p.labels.length - shown.length
-      return (
-        <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
-          {shown.map((l) => (
-            <span key={l.id} className="flex min-w-0 items-center gap-1">
-              <LabelDot color={l.color} />
-              <span className="truncate">{l.name}</span>
-            </span>
-          ))}
-          {rest > 0 && <span className="shrink-0 text-xs">+{rest}</span>}
-        </span>
-      )
-    }
-    case "startDate":
-      return (
-        <span className="text-sm text-muted-foreground">{p.startDate ?? "—"}</span>
-      )
-    case "targetDate":
-      return (
-        <span className="text-sm text-muted-foreground">{p.targetDate ?? "—"}</span>
-      )
-    case "createdAt":
-      return (
-        <span className="text-sm text-muted-foreground">{fmtDay(p.createdAt, lang)}</span>
-      )
-    case "updatedAt":
-      return (
-        <span className="text-sm text-muted-foreground">{fmtDay(p.updatedAt, lang)}</span>
-      )
-    case "taskCount":
-      return (
-        <span className="text-right text-sm text-muted-foreground">{p.taskCount}</span>
-      )
-  }
 }

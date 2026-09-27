@@ -1,19 +1,11 @@
 import { createContext, useContext, useEffect, useRef, useSyncExternalStore } from "react"
 import { Outlet, useLocation, useParams } from "react-router-dom"
-import type { TaskViewSnapshot } from "@/lib/view-state"
+import type { TaskDisplayState } from "@/lib/task-display-state"
+import type { ProjectDisplayState } from "@/lib/display-state"
 import type { FilterCond } from "@/lib/filter-state"
-import type { ViewTaskSelection, ViewTaskDimension } from "@/lib/views-task-stats"
-
-export interface ViewBrowseState extends TaskViewSnapshot {
-  sidebarOpen: boolean
-  dimension: ViewTaskDimension
-  selection: ViewTaskSelection | null
-}
-
-export interface WorkspaceViewDraft extends TaskViewSnapshot {
-  name: string
-  description: string
-}
+import type { ViewTaskDimension } from "@/lib/views-task-stats"
+import type { ViewProjectDimension } from "@/lib/views-project-stats"
+import type { ViewBrowseState, WorkspaceViewDraft, WorkspaceViewDimension } from "@/lib/workspace-view-state"
 
 export interface ViewDirectoryDisplay {
   orderField: "name" | "createdAt" | "updatedAt"
@@ -21,21 +13,37 @@ export interface ViewDirectoryDisplay {
   visible: { createdAt: boolean; updatedAt: boolean }
 }
 
+export interface ViewEntitySession<Display, Dimension extends WorkspaceViewDimension> {
+  commits: Record<string, number>
+  pending: Record<string, { baseFilters?: FilterCond[] } | undefined>
+  browses: Record<string, ViewBrowseState<Display, Dimension>>
+  drafts: Record<string, WorkspaceViewDraft<Display>>
+  editSources: Record<string, ViewBrowseState<Display, Dimension>>
+  creation: {
+    draft: WorkspaceViewDraft<Display>
+    source?: { viewId: string; browse: ViewBrowseState<Display, Dimension> }
+    resultId?: string
+  } | null
+  directory: ViewDirectoryDisplay
+}
+
 export interface ViewsSession {
   version: number
   listeners: Set<() => void>
   subscribe: (listener: () => void) => () => void
   getVersion: () => number
-  commits: Record<string, number>
-  pending: Record<string, { baseFilters?: FilterCond[] } | undefined>
   active: boolean
   locationKey: string
-  browses: Record<string, ViewBrowseState>
-  drafts: Record<string, WorkspaceViewDraft>
-  editSources: Record<string, ViewBrowseState>
-  creation: { draft: WorkspaceViewDraft; source?: { viewId: string; browse: ViewBrowseState }; resultId?: string } | null
-  directory: ViewDirectoryDisplay
+  task: ViewEntitySession<TaskDisplayState, ViewTaskDimension>
+  project: ViewEntitySession<ProjectDisplayState, ViewProjectDimension>
   tab: "task" | "project"
+}
+
+function newEntitySession<Display, Dimension extends WorkspaceViewDimension>(): ViewEntitySession<Display, Dimension> {
+  return {
+    commits: {}, pending: {}, browses: {}, drafts: {}, editSources: {}, creation: null,
+    directory: { orderField: "name", orderDir: "asc", visible: { createdAt: true, updatedAt: true } },
+  }
 }
 
 const SessionContext = createContext<ViewsSession | null>(null)
@@ -56,11 +64,10 @@ function ViewsSessionProvider() {
       return () => { session.current.listeners.delete(listener) }
     },
     getVersion: (): number => session.current.version,
-    commits: {}, pending: {},
     active: true,
     locationKey: location.key,
-    browses: {}, drafts: {}, editSources: {}, creation: null,
-    directory: { orderField: "name", orderDir: "asc", visible: { createdAt: true, updatedAt: true } },
+    task: newEntitySession(),
+    project: newEntitySession(),
     tab: "task",
   })
   session.current.locationKey = location.key
@@ -80,8 +87,8 @@ export function useViewsSession() {
 }
 
 /** 保存交接必须通知新挂载的同一视图；普通浏览修改仍由当前页面管理。 */
-export function notifyViewsSession(session: ViewsSession, committedId?: string) {
-  if (committedId) session.commits[committedId] = (session.commits[committedId] ?? 0) + 1
+export function notifyViewsSession(session: ViewsSession, entity?: { commits: Record<string, number> }, committedId?: string) {
+  if (entity && committedId) entity.commits[committedId] = (entity.commits[committedId] ?? 0) + 1
   session.version++
   for (const listener of session.listeners) listener()
 }

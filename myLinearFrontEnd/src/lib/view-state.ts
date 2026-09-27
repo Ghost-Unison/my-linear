@@ -132,7 +132,7 @@ export function encodeProjectConfig(
   display: ProjectDisplayState,
 ): ViewConfig {
   return {
-    filters: filters.map((f) => ({ field: f.field, op: f.op, values: [...f.values] })),
+    filters: decodeViewFilters({ filters }, "projects_page"),
     display: { ...display, visible: { ...display.visible } },
   }
 }
