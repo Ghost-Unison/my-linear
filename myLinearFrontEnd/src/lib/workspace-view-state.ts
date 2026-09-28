@@ -5,24 +5,15 @@ import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-sta
 import { decodeProjectConfig, decodeTaskConfig, encodeProjectConfig, encodeTaskConfig } from "@/lib/view-state"
 import {
   buildViewTaskStats, displayedTaskRows, selectViewTaskRows,
-  type ViewTaskBucket, type ViewTaskDimension, type ViewTaskSelection,
+  type ViewTaskDimension,
 } from "@/lib/views-task-stats"
 import {
   buildViewProjectStats, displayedProjectRows, selectViewProjectRows,
-  type ViewProjectDimension, type ViewProjectSelection,
+  type ViewProjectDimension,
 } from "@/lib/views-project-stats"
+import type { ViewStatBucket } from "@/lib/views-stat-buckets"
 
 export type WorkspaceViewDimension = ViewTaskDimension | ViewProjectDimension
-
-/** 将泛型会话收窄为共享侧栏的判别联合，不以类型断言跨越实体边界。 */
-export function viewSidebarSelection(
-  selection: { dimension: WorkspaceViewDimension; value: string } | null,
-): ViewTaskSelection | ViewProjectSelection | null {
-  if (!selection) return null
-  const { dimension, value } = selection
-  if (dimension === "lead" || dimension === "member") return { dimension, value }
-  return { dimension, value }
-}
 
 export interface WorkspaceViewSnapshot<Display> {
   filters: FilterCond[]
@@ -55,7 +46,7 @@ export interface WorkspaceViewEntity<Display, Row, Dimension extends WorkspaceVi
   emptyRows: Row[]
   displayedRows: (rows: Row[], display: Display) => Row[]
   selectRows: (rows: Row[], selection: { dimension: Dimension; value: string } | null) => Row[]
-  buildStats: (rows: Row[], dimension: Dimension) => ViewTaskBucket[]
+  buildStats: (rows: Row[], dimension: Dimension) => ViewStatBucket[]
 }
 
 export const TASK_VIEW_ENTITY: WorkspaceViewEntity<TaskDisplayState, TaskRow, ViewTaskDimension> = {

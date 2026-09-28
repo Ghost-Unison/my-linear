@@ -126,6 +126,22 @@ export function remainingViewFilters(current: FilterCond[], submitted: FilterCon
   })
 }
 
+/**
+ * 合成页面级浏览取数条件：保存基底 AND 临时层（P2.md §1.2 / §6 V3 异常①）。
+ * 临时层去除已被基底吸收的完全相同条件实例——保存途中卸载或历史返回可能使 URL `f=`
+ * 残留刚吸收的条件，直接拼接会重复 AND（幂等操作符虽不改结果集，但污染 URL / 请求 / chips）。
+ * absorbing 命中当前 view 时返回提交快照，避免保存缓存与 URL 两层交接期的短暂重复。
+ */
+export function composeBrowseFilters(
+  savedFilters: FilterCond[],
+  conds: FilterCond[],
+  absorbing?: { viewId: string; filters: FilterCond[] } | null,
+  activeViewId?: string | null,
+): FilterCond[] {
+  if (absorbing && absorbing.viewId === activeViewId) return absorbing.filters
+  return [...savedFilters, ...remainingViewFilters(conds, savedFilters)]
+}
+
 /** 前端快照 → config（写入 view.config；深拷贝防引用共享） */
 export function encodeProjectConfig(
   filters: FilterCond[],

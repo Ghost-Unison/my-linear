@@ -4,7 +4,7 @@ import { Box, Layers, MoreHorizontal, Pencil, Trash2, UserRound } from "lucide-r
 import { useTranslation } from "react-i18next"
 import type { View, ViewEntityType } from "@/api/types"
 import { NONE } from "@/lib/filter-state"
-import type { ViewTaskBucket } from "@/lib/views-task-stats"
+import type { ViewStatBucket } from "@/lib/views-stat-buckets"
 import type { WorkspaceViewDimension } from "@/lib/workspace-view-state"
 import { cn } from "@/lib/utils"
 import { RoundIconButton } from "@/components/ui/round-icon-button"
@@ -72,7 +72,7 @@ export function ViewDetailsSidebar({ view, entityType, workspaceName, dimension,
   workspaceName: string
   dimension: WorkspaceViewDimension
   selection: SidebarSelection | null
-  buckets: ViewTaskBucket[]
+  buckets: ViewStatBucket[]
   loading: boolean
   failed: boolean
   onDimension: (value: WorkspaceViewDimension) => void

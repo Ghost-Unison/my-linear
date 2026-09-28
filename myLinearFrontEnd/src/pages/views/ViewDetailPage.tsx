@@ -14,7 +14,7 @@ import type { TaskDisplayState } from "@/lib/task-display-state"
 import type { ProjectDisplayState } from "@/lib/display-state"
 import { remainingViewFilters } from "@/lib/view-state"
 import {
-  browseFrom, newWorkspaceViewDraft, viewSidebarSelection, PROJECT_VIEW_ENTITY, TASK_VIEW_ENTITY,
+  browseFrom, newWorkspaceViewDraft, PROJECT_VIEW_ENTITY, TASK_VIEW_ENTITY,
   type ViewBrowseState, type WorkspaceViewDraft, type WorkspaceViewEntity, type WorkspaceViewDimension,
 } from "@/lib/workspace-view-state"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
@@ -490,7 +490,7 @@ function ViewContent<Display, Row extends { id: string }, Dimension extends Work
           <div className="h-full w-[21rem] pl-4 xl:w-[25rem]">
             <ViewDetailsSidebar view={view} entityType={entity.entityType} workspaceName={workspaceName} active={browse.sidebarOpen}
               onInactiveFocus={() => sidebarToggleRef.current?.focus({ preventScroll: true })}
-              dimension={browse.dimension} selection={viewSidebarSelection(browse.selection)} buckets={buckets} loading={query.isPending} failed={query.isError}
+              dimension={browse.dimension} selection={browse.selection} buckets={buckets} loading={query.isPending} failed={query.isError}
               onDimension={(dimension) => {
                 if (!busy && entity.isDimension(dimension)) changeBrowse({ ...browse, dimension, selection: null })
               }}

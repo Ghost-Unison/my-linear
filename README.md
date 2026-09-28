@@ -85,7 +85,7 @@ npm run dev
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
 - **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）——**已完成**，并提前做完原属 P3 的标签就地创建
-- **P2**（进行中）：三面 Filter / Display、四面 saved_view 后端与三个页面级 View 主流程已完成；独立 Views 的 **Tasks / Projects 目录/详情/new/edit、另存与覆盖保存完整流程已实现**。四页统一空态已接入，本轮 API/后端/DB 无变更；**构建、83 项纯逻辑测试、Browser DOM 功能回归（含修复 Lead NONE 桶 i18n 缺陷）通过，hidden 下真实视觉与多成员/多标签/关闭项目的统计实效不可验收**。历史 44 项/四页 DOM 快照及页面级时序异常待验保留，不标 P2 全完成（见 [P2.md](./docs/product-design/P2.md) §2.7 / §4.5 / §6 V3–V5）。
+- **P2**（进行中）：三面 Filter / Display、四面 saved_view 后端与三个页面级 View 主流程已完成；独立 Views 的 **Tasks / Projects 目录/详情/new/edit、另存与覆盖保存完整流程已实现**。四页统一空态已接入，API/后端/DB 无变更；**构建、87 项纯逻辑测试、Browser DOM 功能回归（含修复 Lead NONE 桶 i18n 缺陷）通过**。2026-09-28 视口恢复（1706×948、visible）后 **B 类真实视觉/动画验收通过**（抽屉 192ms ease-out、关闭终态 width=0+inert、无残留 gap、reduce 瞬时、真实鼠标命中，截图 viewport-b-*）；browser-use 连接恢复后 **A 类端到端时序实证通过**（异常① 保存途中卸载返回 f= 不重复、异常② DELETE 后 GET 500 不复活，截图 viewport-a-*）与 **C 类统计实效实证通过**（多成员去重/多标签/无标签不产 NONE/Show closed 排除，临时模拟数据渲染，截图 viewport-c-*）。**三类验证欠账清零**；V3 两个已知时序异常代码层+端到端双重销账；历史 44 项/四页 DOM 快照保留，P2 功能与验证完备、里程碑关闭待确认（见 [P2.md](./docs/product-design/P2.md) §2.7 / §4.5 / §6 V3–V5）。
 - **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、交互细节打磨；隐藏数量**仅空态范围本轮提前实现**，非空列表的全量通用 hidden 条仍后置（见 [P2.md](./docs/product-design/P2.md) §2.7 / §7）。
 - **P4**：开源化（注册登录、多租户、云上部署）
 

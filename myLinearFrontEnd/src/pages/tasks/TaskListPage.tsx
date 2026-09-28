@@ -6,7 +6,7 @@ import type { ProjectRef, TaskStatus, TaskTab, View } from "@/api/types"
 import { displayError } from "@/lib/errors"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
-import { decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
+import { composeBrowseFilters, decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
 import { displayedTaskRows } from "@/lib/views-task-stats"
 import { resolveListEmptyState } from "@/lib/list-empty-state"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
@@ -116,9 +116,10 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
       setAbsorbing(null)
     }
   }, [absorbing, activeViewId, conds])
-  const browseFilters = useMemo(() =>
-    absorbing?.viewId === activeViewId ? absorbing.filters : [...saved.filters, ...conds],
-  [absorbing, activeViewId, saved.filters, conds])
+  // 临时层与保存基底合成时去除已吸收的相同条件，防保存途中卸载/历史返回使 f= 残留导致重复 AND（P2.md §6 V3 异常①）。
+  const browseFilters = useMemo(
+    () => composeBrowseFilters(saved.filters, conds, absorbing, activeViewId),
+  [saved.filters, conds, absorbing, activeViewId])
   // 新建/编辑仅用 draft，不叠加来源预设的 status，也不叠加浏览临时条件。
   const effectiveConds = draft?.filters ?? browseFilters
   const effectiveDisplay = draft?.display ?? display

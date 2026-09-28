@@ -19,7 +19,7 @@ const {
   taskKeptRoots, taskRowGroupValues, taskSpanKeptSet, taskTreeRowDimmed,
 } = await import("./task-display-state.ts")
 const { NONE } = await import("./filter-state.ts")
-const { remainingViewFilters } = await import("@/lib/view-state")
+const { remainingViewFilters, composeBrowseFilters } = await import("@/lib/view-state")
 const { resolveListEmptyState } = await import("./list-empty-state.ts")
 
 let passed = 0
@@ -440,6 +440,45 @@ check("保存吸收：空提交保留全部当前条件，空当前条件始终�
   assert.deepEqual(remainingViewFilters(current, []), structuredClone(current))
   assert.deepEqual(remainingViewFilters([], current), [])
   assert.deepEqual(remainingViewFilters([], []), [])
+})
+
+check("浏览合成：临时层去除已被保存基底吸收的相同条件，不重复 AND", () => {
+  const saved = [{ field: "status", op: "is", values: ["todo"] }]
+  const conds = [{ field: "status", op: "is", values: ["todo"] }]
+  assert.deepEqual(composeBrowseFilters(saved, conds), [
+    { field: "status", op: "is", values: ["todo"] },
+  ])
+})
+
+check("浏览合成：基底之外的新条件正常叠加，同字段不同操作符不去重", () => {
+  const saved = [{ field: "status", op: "is", values: ["todo"] }]
+  const conds = [
+    { field: "priority", op: "is", values: ["1"] },
+    { field: "status", op: "isNot", values: ["todo"] },
+  ]
+  assert.deepEqual(composeBrowseFilters(saved, conds), [
+    { field: "status", op: "is", values: ["todo"] },
+    { field: "priority", op: "is", values: ["1"] },
+    { field: "status", op: "isNot", values: ["todo"] },
+  ])
+})
+
+check("浏览合成：absorbing 命中当前 view 返回提交快照本身，切走后重新合成", () => {
+  const saved = [{ field: "status", op: "is", values: ["todo"] }]
+  const conds = [{ field: "priority", op: "is", values: ["1"] }]
+  const absorbing = { viewId: "v1", filters: [...saved, ...conds] }
+  assert.equal(composeBrowseFilters(saved, conds, absorbing, "v1"), absorbing.filters)
+  assert.deepEqual(composeBrowseFilters(saved, conds, absorbing, "v2"), [...saved, ...conds])
+})
+
+check("浏览合成：空临时层等于基底、空基底等于去重临时层，且不修改冻结输入", () => {
+  const saved = Object.freeze([Object.freeze({ field: "status", op: "is", values: Object.freeze(["todo"]) })])
+  const conds = Object.freeze([Object.freeze({ field: "status", op: "is", values: Object.freeze(["todo"]) })])
+  assert.deepEqual(composeBrowseFilters(saved, []), [{ field: "status", op: "is", values: ["todo"] }])
+  assert.deepEqual(composeBrowseFilters([], conds), [{ field: "status", op: "is", values: ["todo"] }])
+  assert.deepEqual(composeBrowseFilters(saved, conds), [{ field: "status", op: "is", values: ["todo"] }])
+  assert.equal(saved.length, 1)
+  assert.equal(conds.length, 1)
 })
 
 const emptyInput = {
