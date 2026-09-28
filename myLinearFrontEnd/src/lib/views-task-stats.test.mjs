@@ -12,7 +12,7 @@ registerHooks({
   },
 })
 
-const { buildViewTaskStats, displayedTaskRows, selectViewTaskRows } = await import("./views-task-stats.ts")
+const { buildViewTaskStats, displayedTaskRows, selectViewTaskRows, taskMatchedRows } = await import("./views-task-stats.ts")
 const {
   applyShowCompleted, buildTaskGroupsFlat, buildTaskGroupsTree, buildTaskTreeIndex,
   newTaskDisplay, taskChildVisible, taskDisplayRows, taskGroupCountText,
@@ -43,6 +43,10 @@ function task(id, extra = {}) {
     labels: [],
     createdAt: "2026-09-01T00:00:00Z",
     updatedAt: "2026-09-01T00:00:00Z",
+    // filter 态契约字段（api.md §8）：默认命中行；上下文行（祖先链条节点）由用例显式置 filterMatch:false
+    filterMatch: true,
+    doneCount: 0,
+    totalCount: 0,
     ...extra,
   }
 }
@@ -287,9 +291,9 @@ check("未传 matchIds 保持原展示及灰显规则，包括孤儿、完结态
   }
 })
 
-check("组头仅在当前数小于基准数时展示 current/base", () => {
-  assert.equal(taskGroupCountText(1, 3), "1/3")
-  assert.equal(taskGroupCountText(0, 3), "0/3")
+check("组头仅在当前数小于基准数时展示 current / base", () => {
+  assert.equal(taskGroupCountText(1, 3), "1 / 3")
+  assert.equal(taskGroupCountText(0, 3), "0 / 3")
   assert.equal(taskGroupCountText(3, 3), "3")
   assert.equal(taskGroupCountText(4, 3), "4")
   assert.equal(taskGroupCountText(0, 0), "0")
@@ -307,8 +311,8 @@ check("两级分组基准按完整路径计数，同名二级组不跨一级合�
   const todoBase = group(saved, "todo")
   const done = group(current, "done")
   const doneBase = group(saved, "done")
-  assert.equal(taskGroupCountText(todo.count, todoBase.count), "1/3")
-  assert.equal(taskGroupCountText(group(todo.children, alice.id).count, group(todoBase.children, alice.id).count), "1/2")
+  assert.equal(taskGroupCountText(todo.count, todoBase.count), "1 / 3")
+  assert.equal(taskGroupCountText(group(todo.children, alice.id).count, group(todoBase.children, alice.id).count), "1 / 2")
   assert.equal(taskGroupCountText(group(done.children, alice.id).count, group(doneBase.children, alice.id).count), "1")
 })
 
@@ -320,7 +324,7 @@ check("保存基准使用相同完成/子任务开关，不用未显示的任务
     const current = buildTaskGroupsFlat(anchorsFor(baseline, state, new Set(["parent"])), state, ctx)
     const saved = buildTaskGroupsFlat(displayedTaskRows(baseline, state), state, ctx)
     assert.equal(group(saved, "done"), undefined)
-    assert.equal(taskGroupCountText(group(current, "todo").count, group(saved, "todo").count), showSubIssues ? "1/3" : "1/2")
+    assert.equal(taskGroupCountText(group(current, "todo").count, group(saved, "todo").count), showSubIssues ? "1 / 3" : "1 / 2")
   }
 })
 
@@ -337,9 +341,69 @@ check("基准存在的已过滤祖先不补入当前树，孤儿仍按原规则�
   const todo = group(nodes, "todo")
   assert.deepEqual(ids(todo.rows), [child.id])
   assert.deepEqual([...todo.kept], [child.id])
-  assert.equal(taskGroupCountText(todo.count, group(saved, "todo").count), "1/3")
+  assert.equal(taskGroupCountText(todo.count, group(saved, "todo").count), "1 / 3")
   assert.equal(taskTreeRowDimmed(child, state, idx.parentOf, [], matchIds), true)
   assert.equal(idx.parentOf.has(parent.id), false)
+})
+
+// ---- filter 态（2026-09-28 用户 Linear 验证定稿，P2.md §2.6）----
+
+check("filter 态：上下文行（filterMatch=false）永不进展示行集/统计/钻取", () => {
+  const rows = [
+    task("context", { filterMatch: false, assignee: alice }),
+    task("match", { filterMatch: true, assignee: bob }),
+  ]
+  assert.deepEqual(ids(taskMatchedRows(rows)), ["match"])
+  assert.deepEqual(ids(displayedTaskRows(rows, newTaskDisplay())), ["match"])
+  // 上下文行即使 assignee 命中也不进统计桶
+  assert.deepEqual(buildViewTaskStats(displayedTaskRows(rows, newTaskDisplay()), "assignee"),
+    [{ value: bob.id, name: bob.name, color: bob.avatarColor, count: 1 }])
+})
+
+check("filter 态 chainOnly：规则B 子树展开关闭，仅保留锚点祖先链", () => {
+  const rows = [task("parent"), task("anchor", { parentId: "parent" }),
+    task("descendant", { parentId: "anchor" }), task("side", { parentId: "parent" })]
+  const idx = buildTaskTreeIndex(rows)
+  const childVisible = taskChildVisible("all")
+  // saved 作用域（chainOnly=false）：规则B 展开 anchor 完整子树（含非命中后代 descendant）
+  assert.deepEqual([...taskSpanKeptSet(idx, new Set(["anchor"]), childVisible, false)].sort(),
+    ["anchor", "descendant", "parent"])
+  // 临时 filter（chainOnly=true）：仅祖先链，非命中后代与侧分支不入 kept
+  assert.deepEqual([...taskSpanKeptSet(idx, new Set(["anchor"]), childVisible, true)].sort(),
+    ["anchor", "parent"])
+})
+
+check("filter 态分组树：chainOnly 组头 X 仅计命中锚点、渲染集为祖先链根、规则B 关", () => {
+  // parent 上下文行、anchor 命中、descendant 是 anchor 的非命中后代（后端不会补返，此处显式置上下文验证剪枝）
+  const rows = [task("parent", { filterMatch: false }),
+    task("anchor", { parentId: "parent" }),
+    task("descendant", { parentId: "anchor", filterMatch: false })]
+  const state = newTaskDisplay()
+  const idx = buildTaskTreeIndex(rows)
+  // filter 态锚点 = 命中行（上下文行不作锚点），再按组值分桶
+  const anchors = taskMatchedRows(rows)
+  const chainNodes = buildTaskGroupsTree(rows, anchors, state, ctx, idx, true)
+  const todo = group(chainNodes, "todo")
+  assert.equal(todo.count, 1)                                    // X = 命中锚点数
+  assert.deepEqual(ids(todo.rows), ["parent"])                   // 渲染集根 = 祖先链顶
+  assert.deepEqual([...todo.kept].sort(), ["anchor", "parent"])  // 不含 descendant（规则B 关）
+  // 对照：saved 作用域（chainOnly=false）规则B 展开 descendant
+  const fullNodes = buildTaskGroupsTree(rows, anchors, state, ctx, idx, false)
+  assert.deepEqual([...group(fullNodes, "todo").kept].sort(), ["anchor", "descendant", "parent"])
+})
+
+check("filter 态组头 X / Y：X=saved+临时命中锚点、Y=saved 基底组总数，X==Y 单数", () => {
+  // saved 基底（无临时 filter）：Todo 组 3 个命中
+  const savedRows = [task("t1"), task("t2"), task("t3")]
+  // 叠加临时 priority=high：仅 t1 命中（t2/t3 非命中且非祖先，后端不补返）
+  const filteredRows = [task("t1", { priority: 2 })]
+  const state = newTaskDisplay()
+  const y = group(buildTaskGroupsFlat(displayedTaskRows(savedRows, state), state, ctx), "todo").count
+  const x = group(buildTaskGroupsFlat(displayedTaskRows(filteredRows, state), state, ctx), "todo").count
+  assert.equal(y, 3)
+  assert.equal(x, 1)
+  assert.equal(taskGroupCountText(x, y), "1 / 3")
+  assert.equal(taskGroupCountText(y, y), "3")
 })
 
 check("多标签任务分组与各维度统计同口径，所有分组路径的 flat/tree 计数一致", () => {

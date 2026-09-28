@@ -58,9 +58,7 @@ func ListTasksByProject(pool *pgxpool.Pool) gin.HandlerFunc {
 		for _, task := range tasks {
 			taskRows = append(taskRows, toTaskRow(task, taskLabelMap[task.ID]))
 		}
-		// 条件列表求值（条件间 AND）；提取器与任务列表页共用 taskVal
-		taskRows = filter.Apply(taskRows, conds, taskVal, time.Now())
-		c.JSON(http.StatusOK, taskRows)
+		respondFilteredTaskRows(c, taskRows, conds)
 	}
 }
 
@@ -107,10 +105,17 @@ func ListTasksByWorkspace(pool *pgxpool.Pool) gin.HandlerFunc {
 		for _, task := range tasks {
 			taskRows = append(taskRows, toTaskRow(task, taskLabelMap[task.ID]))
 		}
-		// 条件列表求值（条件间 AND）；labels 联结数据已在行上，提取器直读
-		taskRows = filter.Apply(taskRows, conds, taskVal, time.Now())
-		c.JSON(http.StatusOK, taskRows)
+		respondFilteredTaskRows(c, taskRows, conds)
 	}
+}
+
+// respondFilteredTaskRows 两个任务列表接口共用的响应管线（顺序即契约，P2.md §2.6 filter 态）：
+// 子树徽标按过滤前全量行集累加（Linear 实测不随 filter 变化）→ 条件列表求值（条件间 AND，
+// 提取器共用 taskVal）→ filter 态补返命中行祖先链上下文行（filterMatch=false）；无条件时全量原样返回
+func respondFilteredTaskRows(c *gin.Context, taskRows []TaskRow, conds []filter.Cond) {
+	annotateSubtreeCounts(taskRows)
+	matched := filter.Apply(taskRows, conds, taskVal, time.Now())
+	c.JSON(http.StatusOK, withFilterContext(taskRows, matched, len(conds) > 0))
 }
 
 func CreateTask(pool *pgxpool.Pool) gin.HandlerFunc {

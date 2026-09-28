@@ -55,6 +55,12 @@ type TaskRow struct {
 	CreatedAt   time.Time           `json:"createdAt"`
 	UpdatedAt   time.Time           `json:"updatedAt"`
 	Labels      []label.LabelRef    `json:"labels"`
+	// 过滤命中标记：false = f= 过滤补返的上下文行（命中者的祖先链条节点，P2.md §2.6 filter 态），
+	// 仅作链条还原与置灰，不作锚点/flat 行/组头 X；无过滤或命中行为 true
+	FilterMatch bool `json:"filterMatch"`
+	// 子树进度徽标口径：done 数 / 后代总数，按过滤前全量行集由后端累加（Linear 实测徽标不随 filter 变化）
+	DoneCount  int64 `json:"doneCount"`
+	TotalCount int64 `json:"totalCount"`
 }
 
 // 任务详情
@@ -124,6 +130,7 @@ func toTaskRow(tk any, labelsRef []label.LabelRef) TaskRow {
 			CreatedAt:   v.CreatedAt,
 			UpdatedAt:   v.UpdatedAt,
 			Labels:      labelsRef,
+			FilterMatch: true,
 		}
 	case store.ListTasksByWorkspaceRow:
 		return TaskRow{
@@ -139,6 +146,7 @@ func toTaskRow(tk any, labelsRef []label.LabelRef) TaskRow {
 			CreatedAt:   v.CreatedAt,
 			UpdatedAt:   v.UpdatedAt,
 			Labels:      labelsRef,
+			FilterMatch: true,
 		}
 	case store.GetTaskRow:
 		return TaskRow{
@@ -154,6 +162,7 @@ func toTaskRow(tk any, labelsRef []label.LabelRef) TaskRow {
 			CreatedAt:   v.CreatedAt,
 			UpdatedAt:   v.UpdatedAt,
 			Labels:      labelsRef,
+			FilterMatch: true,
 		}
 	default:
 		panic(fmt.Sprintf("task.toTaskRow: unsupported type %T", tk))
@@ -184,6 +193,76 @@ func toParentRef(parentID *uuid.UUID, parentTitle *string, parentStatus *store.T
 		ref.TotalCount = *total
 	}
 	return ref
+}
+
+// annotateSubtreeCounts 在全量行集上累加每行的真实子树进度（done 数 / 后代总数，api.md §8 徽标口径）。
+// 沿父链向上累加（O(n·depth)），免逐行递归子树；须在 filter 求值前调用（Linear 实测徽标不随 filter 变化）
+func annotateSubtreeCounts(rows []TaskRow) {
+	index := make(map[uuid.UUID]*TaskRow, len(rows))
+	for i := range rows {
+		index[rows[i].ID] = &rows[i]
+	}
+	for i := range rows {
+		done := rows[i].Status == string(store.TaskStatusDone)
+		for cur := rows[i].ParentId; cur != nil; {
+			p, found := index[*cur]
+			if !found {
+				break
+			}
+			p.TotalCount++
+			if done {
+				p.DoneCount++
+			}
+			cur = p.ParentId
+		}
+	}
+}
+
+// withFilterContext filter 态补返命中行的祖先链上下文行（Linear 实测，P2.md §2.6 filter 态）：
+// 结果集 = 命中 ∪ 命中者的全部祖先，保持基底序；祖先行 filterMatch=false（前端不作锚点、置灰）。
+// 上溯遇命中行即止（该祖先链由其自身作为命中行负责）；enabled=false（无条件）原样返回全量行集
+func withFilterContext(all []TaskRow, matched []TaskRow, enabled bool) []TaskRow {
+	if !enabled {
+		return all
+	}
+	matchedSet := make(map[uuid.UUID]struct{}, len(matched))
+	for _, r := range matched {
+		matchedSet[r.ID] = struct{}{}
+	}
+	parentOf := make(map[uuid.UUID]uuid.UUID, len(all))
+	for _, r := range all {
+		if r.ParentId != nil {
+			parentOf[r.ID] = *r.ParentId
+		}
+	}
+	contextSet := make(map[uuid.UUID]struct{})
+	for _, r := range matched {
+		for cur := r.ParentId; cur != nil; {
+			if _, dup := contextSet[*cur]; dup {
+				break
+			}
+			if _, isMatch := matchedSet[*cur]; isMatch {
+				break
+			}
+			contextSet[*cur] = struct{}{}
+			parent, ok := parentOf[*cur]
+			if !ok {
+				break
+			}
+			cur = &parent
+		}
+	}
+	out := make([]TaskRow, 0, len(matched)+len(contextSet))
+	for _, r := range all {
+		_, isMatch := matchedSet[r.ID]
+		_, isContext := contextSet[r.ID]
+		if !isMatch && !isContext {
+			continue
+		}
+		r.FilterMatch = isMatch
+		out = append(out, r)
+	}
+	return out
 }
 
 func toTaskNode(tk store.GetTaskSubtreeRow, labelsRef []label.LabelRef) TaskNode {

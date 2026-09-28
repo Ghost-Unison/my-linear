@@ -181,11 +181,14 @@ export function taskDisplayRows(
  *  规则B：锚点子树内任意深度后代即使非锚点也渲染置灰（sub2-2-1 / task8-1 例，子树展开权仅属锚点）；
  *  链条节点旁侧分支（子树无锚点 ∉ 任何锚点子树）整体剪枝（sub2 / task3 / gRPC 例）；
  *  completed=none：已完成任务不作锚点，仅经规则A 链条进入 kept（task1 例）；锚点子树内已完成后代
- *  自身不渲染但不阻断向下展开（task4 例）；孤儿链止于孤儿（父不在结果集） */
+ *  自身不渲染但不阻断向下展开（task4 例）；孤儿链止于孤儿（父不在结果集）
+ *  chainOnly（filter 态，2026-09-28 用户 Linear 验证定稿）：仅保留规则A 祖先链，规则B 子树展开关闭
+ *  （Linear 实测：带临时 filter 时 Done 组锚点 go-orm 下不挂其命中子任务 anotherBranch） */
 export function taskSpanKeptSet(
   idx: TaskTreeIndex,
   anchorIds: ReadonlySet<string>,
   childVisible: (r: TaskRow) => boolean,
+  chainOnly = false,
 ): Set<string> {
   const kept = new Set<string>()
   // 已完整上溯过链条的节点（其全部祖先必已入 kept），命中才可终止。不能以 kept.has 判——
@@ -201,7 +204,8 @@ export function taskSpanKeptSet(
       cur = idx.parentOf.get(cur) ?? ""
     }
     // 规则B：锚点整棵子树 DFS；completed=none 时已完成后代自身不入 kept（除非已作链条进入），
-    // 但仍继续向下展开（其下可能有活跃后代/其它锚点）
+    // 但仍继续向下展开（其下可能有活跃后代/其它锚点）；filter 态（chainOnly）不展开子树
+    if (chainOnly) continue
     const stack = [...(idx.childrenOf.get(id) ?? [])]
     while (stack.length > 0) {
       const n = stack.pop()!
@@ -233,9 +237,10 @@ export function taskTreeRowDimmed(
   )
 }
 
-/** 仅当前组计数小于同路径保存基准时显示比例，扩大的结果和未传基准均只显示当前数。 */
+/** 组头计数文案（Linear 实测 2026-09-28）：存在基准且当前数小于基准时显示 "X / Y"（X = 锚点数，
+ *  Y = 无临时 filter 的基准组总数）；X == Y 或无基准时只显示单数 */
 export function taskGroupCountText(current: number, baseline?: number): string {
-  return baseline !== undefined && current < baseline ? `${current}/${baseline}` : String(current)
+  return baseline !== undefined && current < baseline ? `${current} / ${baseline}` : String(current)
 }
 
 // ---- 排序引擎 ----
@@ -392,23 +397,24 @@ function groupOneLevelFlat(
 /** 常量空 kept 集：空锚点组（showEmptyGroups 开时出现）复用，免逐组新建 */
 const EMPTY_KEPT: ReadonlySet<string> = new Set<string>()
 
-/** 两级分组引擎（tree 口径，2026-09-14 修订④）：锚点 = 展示行集（已含 completed 档与 showSub 档）中
- *  自身值命中组值的行；组 rows = 渲染集（锚点祖先链 ∪ 锚点完整子树）的根集合——链条节点旁侧分支
- *  整体剪枝，非锚点节点由渲染器置灰；count 与 flat 同口径（= 锚点行数）。
- *  idx 可由调用方传入（与渲染器共享一次构建），缺省内部自建 */
+/** 两级分组引擎（tree 口径，2026-09-14 修订④）：锚点 = 展示行集（已含 completed 档与 showSub 档，
+ *  filter 态下已由调用方剔除上下文行）中自身值命中组值的行；组 rows = 渲染集（锚点祖先链 ∪
+ *  锚点完整子树，chainOnly 时仅祖先链）的根集合——链条节点旁侧分支整体剪枝，非锚点节点由渲染器置灰；
+ *  count 与 flat 同口径（= 锚点行数）。idx 可由调用方传入（与渲染器共享一次构建），缺省内部自建 */
 export function buildTaskGroupsTree(
   base: TaskRow[],
   displayRows: TaskRow[],
   state: TaskDisplayState,
   ctx: TaskGroupContext,
   idx: TaskTreeIndex = buildTaskTreeIndex(base),
+  chainOnly = false,
 ): TaskGroupNode[] {
   if (state.grouping === "none") return []
   const childVisible = taskChildVisible(state.showCompleted)
   const span = (anchors: TaskRow[]) => {
     // 空锚点组渲染集必为空，跳过整套索引遍历
     if (anchors.length === 0) return { kept: EMPTY_KEPT, rows: [] as TaskRow[] }
-    const kept = taskSpanKeptSet(idx, new Set(anchors.map((r) => r.id)), childVisible)
+    const kept = taskSpanKeptSet(idx, new Set(anchors.map((r) => r.id)), childVisible, chainOnly)
     return { kept, rows: taskKeptRoots(base, kept) }
   }
   // 锚点一次分桶（免逐值全表 filter）；二级直接在父组锚点内重新分桶（免全量重扫）

@@ -16,7 +16,7 @@ import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filt
 import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
 import { composeBrowseFilters, decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
 import { resolveListEmptyState, type ListEmptyStateValue } from "@/lib/list-empty-state"
-import { displayedTaskRows } from "@/lib/views-task-stats"
+import { displayedTaskRows, taskMatchedRows } from "@/lib/views-task-stats"
 import { PageHeader } from "@/components/layout/PageHeader"
 import { Breadcrumb } from "@/components/ui/breadcrumb"
 import { ConfirmDialog } from "@/components/ui/dialog"
@@ -153,14 +153,15 @@ function ProjectDetailContent({ workspaceId, projectId }: { workspaceId: string;
   // 基准仍走当前项目任务接口，仅去掉浏览临时条件；不将其他项目或草稿数据混入统计。
   const baselineParams = useMemo(() => encodeConds(saved.filters), [saved.filters])
   const needsBaseline = !draft && viewReady && !viewQuery.isError && !!project && !isError && showTasks &&
-    conds.length > 0 && tasksSuccess && !tasksFetching && visibleTaskCount === 0 && !busy && !absorbing
+    conds.length > 0 && tasksSuccess && !tasksFetching && !busy && !absorbing
   const baselineQuery = useProjectTasks(workspaceId, projectId, baselineParams, needsBaseline)
   const baseline = useMemo(() => {
     // 基准未就绪、刷新中或保存交接期间只显示泛化空态，不能把未知数量装成 0。
     if (!needsBaseline || !baselineQuery.isSuccess || baselineQuery.isFetching || !baselineQuery.data) return undefined
     return {
-      rawCount: new Set(baselineQuery.data.map((task) => task.id)).size,
+      rawCount: new Set(taskMatchedRows(baselineQuery.data).map((task) => task.id)).size,
       visibleCount: displayedTaskRows(baselineQuery.data, effectiveDisplay).length,
+      rows: baselineQuery.data,
     }
   }, [needsBaseline, baselineQuery.isSuccess, baselineQuery.isFetching, baselineQuery.data, effectiveDisplay])
   const emptyState = showTasks && viewReady && !viewQuery.isError && tasksSuccess && !tasksLoading
@@ -168,7 +169,7 @@ function ProjectDetailContent({ workspaceId, projectId }: { workspaceId: string;
         editor: !!draft,
         savedView: !!activeView,
         hasTemporaryFilters: !draft && conds.length > 0,
-        rawCount: new Set((tasks ?? []).map((task) => task.id)).size,
+        rawCount: new Set(taskMatchedRows(tasks ?? []).map((task) => task.id)).size,
         visibleCount: visibleTaskCount,
         baseline,
       })
@@ -560,6 +561,9 @@ function ProjectDetailContent({ workspaceId, projectId }: { workspaceId: string;
                   onAdjustDisplay: () => setOpenPanel("display"),
                 }}
                 display={effectiveDisplay}
+                filtered={effectiveConds.length > 0}
+                chainOnly={!draft && conds.length > 0}
+                baselineTasks={baseline?.rows}
                 onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
                 onNewTask={openCreate}
               />
@@ -683,6 +687,9 @@ function TasksContent({
   emptyState,
   emptyStateActions,
   display,
+  filtered,
+  chainOnly,
+  baselineTasks,
   onOpenTask,
   onNewTask,
 }: {
@@ -695,6 +702,12 @@ function TasksContent({
     "disabled" | "onEditFilters" | "onAdjustFilters" | "onClearTemporary" | "onAdjustDisplay">
   /** display 由页面视图状态驱动，任务列表仅负责渲染。 */
   display: TaskDisplayState
+  /** f= filter 生效态：剔除上下文行（filterMatch=false），组头 X 仅计命中锚点 */
+  filtered: boolean
+  /** 临时 filter 生效态：树渲染集仅祖先链（规则B 关），任务节点折叠让位强制展开 */
+  chainOnly: boolean
+  /** 保存基准行集，仅供同 display、同组路径的组头 "X / Y" 计数 */
+  baselineTasks?: TaskRow[]
   onOpenTask: (taskId: string) => void
   onNewTask: (status: TaskStatus) => void
 }) {
@@ -716,6 +729,9 @@ function TasksContent({
           tasks={tasks}
           state={display}
           workspaceId={workspaceId}
+          filtered={filtered}
+          chainOnly={chainOnly}
+          baselineTasks={baselineTasks}
           onOpenTask={onOpenTask}
           onNewTask={onNewTask}
         />

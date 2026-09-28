@@ -12,7 +12,7 @@ Linear 风格的个人任务记录系统。MVP 阶段仅支持个人使用、无
 | [DESIGN-linear.app.md](./DESIGN-linear.app.md) | Linear 官方视觉设计 token（色彩/字体/间距/组件规格），前端主题基准 |
 | [docs/product-design/P0.md](./docs/product-design/P0.md) | P0 阶段产品模块设计（阶段快照，每阶段一份） |
 | [docs/product-design/P1.md](./docs/product-design/P1.md) | P1 阶段产品模块设计（Label 标签体系） |
-| [docs/product-design/P2.md](./docs/product-design/P2.md) | P2 阶段产品模块设计与实施记录（Filter / Display / saved_view / 独立 Views / 四页空态，进行中） |
+| [docs/product-design/P2.md](./docs/product-design/P2.md) | P2 阶段产品模块设计与实施记录（Filter / Display / saved_view / 独立 Views / 四页空态，**已完成**） |
 | [docs/api.md](./docs/api.md) | API 契约（单一活文档，随阶段更新，接口标注引入阶段） |
 
 ## 技术栈
@@ -73,19 +73,19 @@ npm run dev
 > 定位：参考 Linear 的页面布局与信息架构，但**功能上做最大简化**。
 > 视觉美感与交互动效后续迭代优化，先保证功能闭环、信息层级正确。
 
-模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消。**[docs/product-design/P2.md](./docs/product-design/P2.md) 为当前阶段**：三面 Filter / Display options 与四面 saved_view 后端接口已完成；Projects / Tasks 列表及项目详情 View 的创建、编辑、查看、删除、另存及覆盖保存已完成，三面沿用同一套交互逻辑；Tasks 保留 Active/Backlog/All，项目详情保留 Overview/Tasks 并按当前项目隔离视图。**浏览临时层与编辑草稿隔离、切 tab 暂存/Cancel 丢弃、新建无蓝点/Reset、Reset 还原保存值**的现行规则与验收例子集中在 P2.md **§4.4.1**，不再随 Linear 行为变动自动调整。workspace 级 Views 的 **Tasks / Projects 目录、独立 new/edit 页及详情完整流程已实现**：本轮经用户授权将 Projects 对齐 Tasks，按实体隔离目录与模块 session，普通新建可切类型且草稿独立、编辑与另存锁定实体；项目 Filter 白名单、Display、共享项目列表、Lead/Members/Labels 统计单选及保存交接见 P2.md **§4.5**。本轮 API/后端/DB 无变更，中英 i18n 已就绪。四页统一空态及同 scope、同 Display 的隐藏计数规则见 **§2.7**：含独立 Tasks/Projects，保存空视图与草稿空态无 Create；Clear 仅清临时 filters，不等同 Reset。**当前 `npm run build` 及原 44 + 新 39 = 83 项纯逻辑测试通过；Browser DOM 回归进行中，尚无本轮功能通过结论，仍 hidden、不可真实视觉验收**。原 44 项及四页 DOM 验证保留为历史快照；本轮 Browser 最终结果待主代理回填 **§6 V4「2026-09-25 Projects 扩展」**。项目详情 2026-09-22 的构建、功能回归与主要布局截图属于历史验证记录；tasks_page 等原时序遗留仍按 §6 V3 保留，不因 views_page 的 commit/resultId 专项验证而全部销账。
+模块设计按阶段拆分为快照文档：**[docs/product-design/P0.md](./docs/product-design/P0.md)**（workspace / member / project / task CRUD + 任务列表）已定稿——后端 21 个接口全部实现，前端 P0 五个路由页面全部落地（Workspace Home / 项目列表 / 项目详情 / 任务列表 / 任务详情）。**[docs/product-design/P1.md](./docs/product-design/P1.md)**（Label 标签体系）**已完成**——后端 6 个新接口与 7 个既有接口的形状扩展全部实现，前端标签管理区（chip 流 + hover 编辑/删除 + 删除二次确认）、任务/项目打标、列表行与子任务行 chip 簇全部落地；并提前做完了原属 P3 的「标签就地创建」：两个详情页的 Labels 行升级为 Linear 同款交互——已打标签逐个可点 chip + 圆形「+」共用同一枚面板（搜索 / 复选 / 无匹配时就地新建选色），实现为 Project / Task 共用的共享组件 `ui/label-picker.tsx`。内置固定视图取消。**[docs/product-design/P2.md](./docs/product-design/P2.md) 已完成（2026-09-28 里程碑关闭）**：三面 Filter / Display options 与四面 saved_view 后端接口已完成；Projects / Tasks 列表及项目详情 View 的创建、编辑、查看、删除、另存及覆盖保存已完成，三面沿用同一套交互逻辑；Tasks 保留 Active/Backlog/All，项目详情保留 Overview/Tasks 并按当前项目隔离视图。**浏览临时层与编辑草稿隔离、切 tab 暂存/Cancel 丢弃、新建无蓝点/Reset、Reset 还原保存值**的现行规则与验收例子集中在 P2.md **§4.4.1**，不再随 Linear 行为变动自动调整。workspace 级 Views 的 **Tasks / Projects 目录、独立 new/edit 页及详情完整流程已实现**：本轮经用户授权将 Projects 对齐 Tasks，按实体隔离目录与模块 session，普通新建可切类型且草稿独立、编辑与另存锁定实体；项目 Filter 白名单、Display、共享项目列表、Lead/Members/Labels 统计单选及保存交接见 P2.md **§4.5**。本轮 API/后端/DB 无变更，中英 i18n 已就绪。四页统一空态及同 scope、同 Display 的隐藏计数规则见 **§2.7**：含独立 Tasks/Projects，保存空视图与草稿空态无 Create；Clear 仅清临时 filters，不等同 Reset。filter 态任务树展示规则（后端补返命中行祖先链上下文行、前端链-only 渲染/锚点置灰/组头 "X / Y" 计数、行级子树进度徽标）于 2026-09-28 用户 Linear 实测三轮定案，见 P2.md **§2.6 filter 态增补** 与 api.md §4/§8。**构建与 52 + 39 = 91 项纯逻辑测试通过；Browser DOM 功能回归、A/B/C 三类实证验收（时序/视觉动画/统计实效）与 filter 态浏览器 5 步截图验证（fv-*）全部通过，P2 里程碑关闭（用户确认）**。历史验证快照保留于 P2.md §6 V3–V5。
 
 ## 功能边界（裁剪项与后置项）
 
 裁剪（不做）：登录鉴权（P4 开源化再做）、评论、Activity 动态、附件、通知/Inbox、Cycle/Sprint、Milestone、项目 Progress 图表、Health 状态、任务编号（GHO-13）、工时估算、暗/亮主题切换（先只做暗色）。
 
-后置：看板拖拽排序（P3）、列表行内编辑（P3）。（原列 P3 的「标签就地创建」已随 P1 提前实现；自定义视图 saved_view 与列表页 filter / display options 面板为当前 P2 阶段主体，进度见下方路线图与 [docs/product-design/P2.md](./docs/product-design/P2.md)）
+后置：看板拖拽排序（P3）、列表行内编辑（P3）。（原列 P3 的「标签就地创建」已随 P1 提前实现；自定义视图 saved_view 与列表页 filter / display options 面板已随 P2 完成，见下方路线图与 [docs/product-design/P2.md](./docs/product-design/P2.md)）
 
 ## 开发路线图
 
 - **P0**：workspace / member / project / task 的 CRUD + 任务列表（按状态分组 + 两层子任务树）
 - **P1**：Label 标签体系（workspace 标签 tab 管理区、任务/项目打标与展示）——**已完成**，并提前做完原属 P3 的标签就地创建
-- **P2**（进行中）：三面 Filter / Display、四面 saved_view 后端与三个页面级 View 主流程已完成；独立 Views 的 **Tasks / Projects 目录/详情/new/edit、另存与覆盖保存完整流程已实现**。四页统一空态已接入，API/后端/DB 无变更；**构建、87 项纯逻辑测试、Browser DOM 功能回归（含修复 Lead NONE 桶 i18n 缺陷）通过**。2026-09-28 视口恢复（1706×948、visible）后 **B 类真实视觉/动画验收通过**（抽屉 192ms ease-out、关闭终态 width=0+inert、无残留 gap、reduce 瞬时、真实鼠标命中，截图 viewport-b-*）；browser-use 连接恢复后 **A 类端到端时序实证通过**（异常① 保存途中卸载返回 f= 不重复、异常② DELETE 后 GET 500 不复活，截图 viewport-a-*）与 **C 类统计实效实证通过**（多成员去重/多标签/无标签不产 NONE/Show closed 排除，临时模拟数据渲染，截图 viewport-c-*）。**三类验证欠账清零**；V3 两个已知时序异常代码层+端到端双重销账；历史 44 项/四页 DOM 快照保留，P2 功能与验证完备、里程碑关闭待确认（见 [P2.md](./docs/product-design/P2.md) §2.7 / §4.5 / §6 V3–V5）。
+- **P2**——**已完成（2026-09-28 里程碑关闭，用户测试确认）**：三面 Filter / Display、四面 saved_view 后端与三个页面级 View 主流程完成；独立 Views 的 **Tasks / Projects 目录/详情/new/edit、另存与覆盖保存完整流程实现**。四页统一空态接入。构建、91 项纯逻辑测试（52 + 39）、Browser DOM 功能回归（含修复 Lead NONE 桶 i18n 缺陷）通过；2026-09-28 视口/连接恢复后 **A 类端到端时序、B 类真实视觉/动画、C 类统计实效三类实证验收全部销账**（截图 viewport-a/b/c-*）；V3 两个已知时序异常代码层+端到端双重销账。收尾追加 **filter 态任务树展示对齐**（用户 Linear 实测三轮定案：后端补返命中行祖先链上下文行 + 行级子树徽标，前端链-only 渲染/锚点置灰/强制展开/组头 "X / Y"，见 P2.md §2.6 filter 态增补；截图 fv-*）。历史快照保留（见 [P2.md](./docs/product-design/P2.md) §2.7 / §4.5 / §6 V3–V5）。
 - **P3**：看板拖拽排序、列表行内编辑（点击列值直接修改）、交互细节打磨；隐藏数量**仅空态范围本轮提前实现**，非空列表的全量通用 hidden 条仍后置（见 [P2.md](./docs/product-design/P2.md) §2.7 / §7）。
 - **P4**：开源化（注册登录、多租户、云上部署）
 

@@ -159,6 +159,12 @@ export interface TaskRow {
   labels: LabelRef[]
   createdAt: string
   updatedAt: string
+  /** 过滤命中标记：false = f= 过滤补返的上下文行（命中者祖先链条节点，P2.md §2.6 filter 态），
+   *  不作锚点/flat 行/组头 X；无过滤或命中行为 true */
+  filterMatch: boolean
+  /** 子树进度徽标（done 数 / 后代总数）：后端按过滤前全量行集累加，不随 filter 变化（Linear 实测） */
+  doneCount: number
+  totalCount: number
 }
 
 /** 父任务引用：子任务详情页 "Sub-issue of" 行（api.md §8 GetTask）；done/total = 父任务后代完成统计 */

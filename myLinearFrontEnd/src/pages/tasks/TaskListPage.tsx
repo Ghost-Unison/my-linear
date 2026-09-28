@@ -7,7 +7,7 @@ import { displayError } from "@/lib/errors"
 import { encodeConds, parseConds, writeConds, type FilterCond } from "@/lib/filter-state"
 import { isSameTaskDisplay, type TaskDisplayState } from "@/lib/task-display-state"
 import { composeBrowseFilters, decodeTaskConfig, encodeTaskConfig, type TaskViewSnapshot } from "@/lib/view-state"
-import { displayedTaskRows } from "@/lib/views-task-stats"
+import { displayedTaskRows, taskMatchedRows } from "@/lib/views-task-stats"
 import { resolveListEmptyState } from "@/lib/list-empty-state"
 import { useWorkspaces } from "@/hooks/useWorkspaces"
 import { useWorkspaceTasks } from "@/hooks/useTasks"
@@ -128,15 +128,17 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
   const visibleCount = useMemo(() => displayedTaskRows(tasks ?? [], effectiveDisplay).length, [tasks, effectiveDisplay])
   const listLoading = isPending || (isFetching && visibleCount === 0)
   // 基准保留当前预设或保存视图作用域，只移除浏览临时条件，使用相同 Display 按 ID 去重。
+  // 临时 chip 生效即取基准（不再限定零展示）：既供空态归因，也供组头 "X / Y" 的 Y（saved 基底组总数）。
   const baselineParams = useMemo(() => encodeConds(saved.filters), [saved.filters])
   const needsBaseline = !draft && viewReady && !viewQuery.isError && conds.length > 0 &&
-    isSuccess && !isFetching && visibleCount === 0 && !busy && !absorbing
+    isSuccess && !isFetching && !busy && !absorbing
   const baselineQuery = useWorkspaceTasks(workspaceId, baselineParams, needsBaseline)
   const baseline = useMemo(() => {
     if (!needsBaseline || !baselineQuery.isSuccess || baselineQuery.isFetching || !baselineQuery.data) return undefined
     return {
-      rawCount: new Set(baselineQuery.data.map((row) => row.id)).size,
+      rawCount: new Set(taskMatchedRows(baselineQuery.data).map((row) => row.id)).size,
       visibleCount: displayedTaskRows(baselineQuery.data, effectiveDisplay).length,
+      rows: baselineQuery.data,
     }
   }, [needsBaseline, baselineQuery.isSuccess, baselineQuery.isFetching, baselineQuery.data, effectiveDisplay])
   const emptyState = viewReady && !viewQuery.isError && isSuccess && !listLoading
@@ -144,7 +146,7 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
         editor: !!draft,
         savedView: !!activeView,
         hasTemporaryFilters: !draft && conds.length > 0,
-        rawCount: new Set((tasks ?? []).map((row) => row.id)).size,
+        rawCount: new Set(taskMatchedRows(tasks ?? []).map((row) => row.id)).size,
         visibleCount,
         baseline,
       })
@@ -442,6 +444,9 @@ function TaskListContent({ workspaceId }: { workspaceId: string }) {
               tasks={tasks!}
               state={effectiveDisplay}
               workspaceId={workspaceId!}
+              filtered={effectiveConds.length > 0}
+              chainOnly={!draft && conds.length > 0}
+              baselineTasks={baseline?.rows}
               onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
               onNewTask={openCreate}
               onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}

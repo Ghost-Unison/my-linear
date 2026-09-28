@@ -14,10 +14,13 @@ export interface ViewTaskSelection {
   value: string
 }
 
-/** 与列表锚点口径一致：先隐藏完结行，再应用子任务开关，最后按 ID 去重。 */
+/** 与列表锚点口径一致：先剔除 filter 上下文行（链条节点不作展示行），再隐藏完结行、应用子任务开关、按 ID 去重。 */
 export function displayedTaskRows(tasks: TaskRow[], state: TaskDisplayState): TaskRow[] {
-  return uniqueById(taskDisplayRows(applyShowCompleted(tasks, state.showCompleted), state.showSubIssues))
+  return uniqueById(taskDisplayRows(applyShowCompleted(taskMatchedRows(tasks), state.showCompleted), state.showSubIssues))
 }
+
+/** f= 过滤补返的祖先链条上下文行（filterMatch=false）只作树上下文，永不进展示行集/统计/钻取（P2.md §2.6 filter 态） */
+export const taskMatchedRows = (tasks: TaskRow[]): TaskRow[] => tasks.filter((r) => r.filterMatch)
 
 /** 统计只接受展示行，不读取树上下文，也不将无标签任务归入虚构标签桶。 */
 export function buildViewTaskStats(rows: TaskRow[], dimension: ViewTaskDimension): ViewStatBucket[] {

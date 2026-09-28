@@ -270,12 +270,15 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
 // TaskRow（列表行）
 {
   "id": "uuid", "parentId": "uuid | null",
+  "parentTitle": "... | null",           // 父任务标题：状态筛选平铺视图下父行可能不在结果集，行内 "> parentTitle" 面包屑；无父为 null
   "title": "...", "status": "todo", "priority": 0,
   "project": ProjectRef | null,
   "assignee": MemberRef | null,
   "dueDate": "2026-10-01 | null",
   "labels": LabelRef[],                  // P1：行完备原则（§2.9），列表行 chip 渲染
-  "createdAt": "...", "updatedAt": "..."
+  "createdAt": "...", "updatedAt": "...",
+  "filterMatch": true,                   // P2 §2.6 filter 态：false = f= 过滤补返的上下文行（命中者祖先链条节点），仅作树上下文/置灰，不作锚点/flat 行/组头 X；无过滤或命中行为 true
+  "doneCount": 1, "totalCount": 3        // P2 §2.6：行内子树进度徽标 x/y，后端按过滤前全量行集沿父链累加（不随 filter 变化）；无后代为 0
 }
 
 // TaskDetail = TaskRow + { "description": "...", "parent": { "id", "title", "status", "doneCount", "totalCount" } | null }（parent 见 §8 GetTask）
@@ -288,7 +291,7 @@ Go 的 `encoding/json` 无法区分"缺席"与"显式 null"（指针都解为 `n
   "labels": LabelRef[] }                 // P1：子任务行与列表行同渲染
 ```
 
-> 说明：列表统一返回**平铺数组**（含 `parentId`），前端负责按 status 分组与树形组装；子任务进度徽标 x/y 由前端从 subtree 数组计算（x = status='done' 的节点数，y = 节点总数）。嵌入的 labels 数组按 created_at 升序，空为 `[]`（非 null）。
+> 说明：列表统一返回**平铺数组**（含 `parentId`），前端负责按 status 分组与树形组装。**列表行子树进度徽标 x/y 直接读 TaskRow.doneCount/totalCount**（后端 `annotateSubtreeCounts` 在 filter 求值前按全量行集沿父链累加，故不随 filter 变化，P2.md §2.6）；任务详情页 Sub-issues 区另以 §8 subtree 接口为数据源。嵌入的 labels 数组按 created_at 升序，空为 `[]`（非 null）。
 
 ---
 
@@ -373,7 +376,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 
 ### GET /workspaces/:wid/projects/:projectId/tasks `P0`
 项目详情页任务列表（Issues tab）。**参数**: `f=<field>.<op>.<values>` 条件列表（与 §8 `GET /tasks` 同契约同字段白名单，§2.2 P2 修订；project 字段在本面隐含，前端 Filter 菜单不提供，P2.md §2.2）。
-**响应** `200`: `TaskRow[]`（平铺含子任务，按 status、createdAt 排序）。
+**响应** `200`: `TaskRow[]`（平铺含子任务，按 status、createdAt 排序）。**filter 态补返上下文行 + doneCount/totalCount 徽标口径同 §8 `GET /tasks`**（handler `annotateSubtreeCounts` + `withFilterContext`，P2.md §2.6）。
 → sqlc: `ListTasksByProject`（`deleted_at IS NULL`；`LEFT JOIN member` 取 assignee；固定排序同 §2.2 任务列表）；P1 增 `ListLabelsByTaskIds` 批量组装 labels（handler 内存分组避免 N+1，空为 []）
 
 ## 8. Task 接口（嵌套于 workspace）
@@ -381,6 +384,7 @@ avatarColor 必填 + hex 校验为 P1 修订（前端调色板默认预选色，
 ### GET /workspaces/:wid/tasks `P0`
 任务列表页主查询。**参数**: `f=<field>.<op>.<values>` 条件列表（可重复，条件间 AND，§2.2 P2 修订；字段白名单 `status/priority/assignee/project/labels/dueDate/createdAt/updatedAt`，`assignee/project/labels` 支持 `none`，`dueDate` 另支持 `overdue` 谓词与 from now 五档阶梯）。遗留参数 `filter=all|active|backlog` **已退役**（2026-09 A2：前端 tab 迁移为页面侧合成 f= status 条件，后端删除 `legacyStatusConds` 与 filter= 分支；`?tab=` 仅前端 URL 参数，后端不感知）。
 **响应** `200`: `TaskRow[]`（平铺含子任务，按 status 枚举序、createdAt 排序）。
+**filter 态补返上下文行（P2.md §2.6，2026-09-28）**：`f=` 非空时响应 = **命中行 ∪ 命中者的全部祖先链条节点**（保持基底序）；祖先行 `filterMatch=false` 供前端还原完整链条（否则命中节点被孤儿规则误提根、链条断裂），命中行 `filterMatch=true`；无 `f=` 时返回全量行集且所有行 `filterMatch=true`。每行 `doneCount/totalCount` 由 handler `annotateSubtreeCounts` 在 filter 求值**之前**按全量行集沿父链累加（徽标口径不随 filter 变化）。前端消费（剔上下文行 / 链-only 渲染 / 组头 X-Y）见 P2.md §2.6。
 → sqlc: `ListTasksByWorkspace`：`deleted_at IS NULL` + statuses 数组可选筛选（§2.2）+ 固定排序 + `LEFT JOIN project/member` 组装 ProjectRef/assignee；走 `(workspace_id, parent_id)` 部分索引；P1 增 `ListLabelsByTaskIds` 批量取标签 handler 组装（空为 []）
 
 ### POST /workspaces/:wid/tasks `P0`

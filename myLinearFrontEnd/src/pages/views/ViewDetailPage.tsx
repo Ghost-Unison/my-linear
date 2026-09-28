@@ -55,6 +55,10 @@ interface EntityListProps<Display, Row> {
   selectedRows: Row[]
   baselineRows?: Row[]
   matchIds?: ReadonlySet<string>
+  /** f= filter 生效态（任务侧）：剔除上下文行（filterMatch=false），组头 X 仅计命中锚点 */
+  filtered?: boolean
+  /** 临时 filter 生效态（任务侧）：树渲染集仅祖先链（规则B 关）+ 强制展开 */
+  chainOnly?: boolean
   state: Display
   onChange: (display: Display) => void
   content?: ReactNode
@@ -271,7 +275,10 @@ function ViewContent<Display, Row extends { id: string }, Dimension extends Work
   const displayChanged = !entity.sameDisplay(browse.display, saved.display)
   const baselineRows = editor ? undefined : browse.filters.length > 0
     ? baselineQuery.isSuccess ? baselineQuery.data : undefined : selection ? rows : undefined
-  const rawCount = useMemo(() => new Set(rows.map((row) => row.id)).size, [rows])
+  const rawCount = useMemo(
+    () => new Set(rows.filter((row) => (row as { filterMatch?: boolean }).filterMatch !== false).map((row) => row.id)).size,
+    [rows],
+  )
   const emptyBaseline = useMemo(() => {
     // 组头继续使用原基准；空态仅接受稳定成功的数据，未知不能用空数组伪造零。
     if (editor || browse.filters.length === 0 || busy || !baselineQuery.isSuccess || baselineQuery.isFetching
@@ -476,7 +483,8 @@ function ViewContent<Display, Row extends { id: string }, Dimension extends Work
       <div className="flex min-h-0 flex-1 px-6">
         <div className="min-h-0 min-w-0 flex-1 overflow-auto pb-6 pt-2 scrollbar-gutter-stable">
           <renderer.List rows={rows} selectedRows={selectedRows} state={effectiveDisplay} workspaceId={workspaceId}
-            matchIds={matchIds} baselineRows={baselineRows} onChange={changeDisplay} disabled={busy}
+            matchIds={matchIds} baselineRows={baselineRows} filtered={effectiveFilters.length > 0}
+            chainOnly={!editor && browse.filters.length > 0} onChange={changeDisplay} disabled={busy}
             content={query.isError ? <p role="alert" className="py-4 text-sm text-destructive">{displayError(t, query.error, entity.loadErrorKey)}</p>
               : listLoading ? <p role="status" className="py-4 text-sm text-muted-foreground">{t("common.loading")}</p>
                 : emptyState ? <ListEmptyState state={emptyState} entity={entity.entityType} disabled={busy}
@@ -512,12 +520,12 @@ function ViewContent<Display, Row extends { id: string }, Dimension extends Work
   )
 }
 
-function TaskViewRows({ rows, state, workspaceId, baselineRows, matchIds, content, disabled }: EntityListProps<TaskDisplayState, TaskRow>) {
+function TaskViewRows({ rows, state, workspaceId, baselineRows, matchIds, filtered, chainOnly, content, disabled }: EntityListProps<TaskDisplayState, TaskRow>) {
   const navigate = useNavigate()
   const [createTask, setCreateTask] = useState<{ status: TaskStatus; project?: ProjectRef } | null>(null)
   return <>
     {content !== undefined ? content : <TaskGroupList tasks={rows} state={state} workspaceId={workspaceId}
-      matchIds={matchIds} baselineTasks={baselineRows}
+      matchIds={matchIds} baselineTasks={baselineRows} filtered={filtered} chainOnly={chainOnly}
       onOpenTask={(id) => navigate(`/w/${workspaceId}/tasks/${id}`)}
       onOpenProject={(id) => navigate(`/w/${workspaceId}/projects/${id}`)}
       onNewTask={(status, project) => { if (!disabled) setCreateTask({ status, project }) }} />}

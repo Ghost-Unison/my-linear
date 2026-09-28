@@ -7,6 +7,10 @@
 //   任意深度非锚点后代保留置灰（子树展开权仅属锚点）；链条节点旁侧分支（子树无锚点）整体剪枝；
 //   completed=none 时已完成任务仅作为锚点祖先的灰链条节点保留，锚点子树内已完成后代不渲染；
 //   tree 孤儿（父不在结果集）提根置灰；平铺模式不插父行（链条仅面包屑体现，用户定案）。
+// filter 态（2026-09-28 用户 Linear 验证定稿，P2.md §2.6）：后端补返命中行祖先链上下文行
+// （filterMatch=false）——展示行集/锚点/flat 行/组头 X 仅计命中行；临时 filter 下树渲染集仅祖先链
+// （规则B 子树展开关闭）且任务节点折叠让位强制展开；组头计数带基准时显示 "X / Y"；
+// 行内子树进度徽标读后端真实子树口径（不随 filter 变化）。
 // 分组两级组头形态对齐 project-groups（一级灰底圆角行 / 二级值名 + 右延伸横线）；
 // 组头计数 = 展示行集自身值命中（含组路径祖先值），flat/tree 同口径（图7 Todo 5 / 图8、10 Todo 8）。
 // 行内（对齐 Linear）：左 = 优先级 + 状态 + 标题（+ 子树进度 x/y + 父面包屑仅平铺）；
@@ -39,7 +43,7 @@ import {
   type TaskGroupNode,
 } from "@/lib/task-display-state"
 import { cn } from "@/lib/utils"
-import { displayedTaskRows } from "@/lib/views-task-stats"
+import { displayedTaskRows, taskMatchedRows } from "@/lib/views-task-stats"
 import { useLabels } from "@/hooks/useLabels"
 import { useMembers } from "@/hooks/useMembers"
 import { useProjects } from "@/hooks/useProjects"
@@ -54,11 +58,18 @@ const ROW_CHIP = "flex h-5 shrink-0 items-center gap-1 rounded border px-1.5 tex
 /** 非当前分组值的行整体置灰（对齐 Linear：树跨组展示时，非本组值的行灰一点）；tree 孤儿同置灰 */
 const DIM = "opacity-60"
 
+/** chainOnly 态强制展开用的常量空折叠集（任务节点折叠让位，组头折叠仍尊重用户） */
+const EMPTY_COLLAPSED: ReadonlySet<string> = new Set()
+
 interface TaskGroupListProps {
   /** 平铺任务数组（含子任务），后端基底序（status 枚举序 + created_at 升序，api.md §4） */
   tasks: TaskRow[]
   /** 已按 display 和独立钻取计算的锚点 ID；基础任务仍保留树上下文，空集合表示无匹配。 */
   matchIds?: ReadonlySet<string>
+  /** f= filter 生效态（任意生效条件）：展示行集剔除上下文行（filterMatch=false），组头 X 仅计命中锚点 */
+  filtered?: boolean
+  /** 临时 filter 生效态：树渲染集仅祖先链（规则B 关），任务节点折叠让位强制展开 */
+  chainOnly?: boolean
   /** 保存基准任务，仅用于同 display、同组路径的组头计数，不得补入当前任务树。 */
   baselineTasks?: TaskRow[]
   /** display 状态（页面内存，每 tab 一份）；分组值集异步清单未就绪时分组渲染暂缓 */
@@ -74,6 +85,8 @@ interface TaskGroupListProps {
 export function TaskGroupList({
   tasks,
   matchIds,
+  filtered = false,
+  chainOnly = false,
   baselineTasks,
   state,
   workspaceId,
@@ -108,10 +121,15 @@ export function TaskGroupList({
     () => applyShowCompleted(tasks, state.showCompleted),
     [tasks, state.showCompleted],
   )
-  // 展示行集（flat 行 / 组头计数 / tree 锚点集同源于此）：completed 档 + showSub 档前端渲染层过滤
+  // 展示行集（flat 行 / 组头计数 / tree 锚点集同源于此）：filter 态先剔上下文行（单源 taskMatchedRows），
+  // 再经 completed 档 + showSub 档前端渲染层过滤
+  const anchorScope = useMemo(
+    () => (filtered ? taskMatchedRows(visibleScope) : visibleScope),
+    [visibleScope, filtered],
+  )
   const displayRows = useMemo(
-    () => taskDisplayRows(visibleScope, state.showSubIssues, matchIds),
-    [visibleScope, state.showSubIssues, matchIds],
+    () => taskDisplayRows(anchorScope, state.showSubIssues, matchIds),
+    [anchorScope, state.showSubIssues, matchIds],
   )
   const treeMode = state.showSubIssues && state.nestedSubIssues
 
@@ -128,9 +146,9 @@ export function TaskGroupList({
   const groups = useMemo(() => {
     if (state.grouping === "none" || !ready) return []
     return treeMode
-      ? buildTaskGroupsTree(base, displayRows, state, ctx, treeIndex)
+      ? buildTaskGroupsTree(base, displayRows, state, ctx, treeIndex, chainOnly)
       : buildTaskGroupsFlat(displayRows, state, ctx)
-  }, [base, displayRows, state, ctx, treeMode, ready, treeIndex])
+  }, [base, displayRows, state, ctx, treeMode, ready, treeIndex, chainOnly])
 
   // 基准只需锚点计数，flat/tree 口径相同；绝不用于补全 base、树索引或渲染行。
   const baselineGroups = useMemo(() => {
@@ -145,9 +163,10 @@ export function TaskGroupList({
       treeIndex,
       new Set(displayRows.map((r) => r.id)),
       taskChildVisible(state.showCompleted),
+      chainOnly,
     )
     return { roots: taskKeptRoots(base, kept), kept }
-  }, [treeIndex, base, displayRows, state.grouping, state.showCompleted, treeMode])
+  }, [treeIndex, base, displayRows, state.grouping, state.showCompleted, treeMode, chainOnly])
 
   // 折叠状态：组（按组路径键）与任务节点（按 id 键）共用一个集合，键空间不冲突
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
@@ -225,7 +244,7 @@ export function TaskGroupList({
             childrenOf={childrenOf}
             parentOf={treeIndex.parentOf}
             kept={kept}
-            collapsed={collapsed}
+            collapsed={chainOnly ? EMPTY_COLLAPSED : collapsed}
             onToggle={toggle}
             dimPath={path}
             matchIds={matchIds}
@@ -238,8 +257,6 @@ export function TaskGroupList({
           <FlatRow
             key={task.id}
             task={task}
-            hasChildren={(childrenOf.get(task.id) ?? []).length > 0}
-            childrenOf={childrenOf}
             state={state}
             onOpenTask={onOpenTask}
             onOpenProject={onOpenProject}
@@ -360,21 +377,6 @@ function ChevronButton({ collapsed, onClick }: { collapsed: boolean; onClick: ()
   )
 }
 
-/** 后代子树统计：x = done 节点数，y = 节点总数（api.md §4 徽标口径，任意深度） */
-function subtreeStats(rootId: string, childrenOf: Map<string, TaskRow[]>) {
-  let done = 0
-  let total = 0
-  const walk = (id: string) => {
-    for (const child of childrenOf.get(id) ?? []) {
-      total++
-      if (child.status === "done") done++
-      walk(child.id)
-    }
-  }
-  walk(rootId)
-  return { done, total }
-}
-
 /** 行右侧元信息（随 Display properties 显隐）：labels / project / dueDate / assignee / created / updated。
  *  固定列宽槽位（Linear 实测同位列）：无值行留空槽、列位不逐行漂移（流式 flex 下 "Sep 3"/"Sep 14"
  *  宽差与 chip 有无会推斜左邻列）；日期槽内左对齐（Linear 同款，右缘自然参差） */
@@ -463,20 +465,10 @@ function RowMeta({
   )
 }
 
-/** 行左公共部分：优先级 + 状态图标（随 Display properties 显隐）+ 标题 + 子树进度徽标 */
-function RowLead({
-  task,
-  state,
-  hasChildren,
-  childrenOf,
-}: {
-  task: TaskRow
-  state: TaskDisplayState
-  hasChildren: boolean
-  childrenOf: Map<string, TaskRow[]>
-}) {
+/** 行左公共部分：优先级 + 状态图标（随 Display properties 显隐）+ 标题 + 子树进度徽标
+ *  （徽标读后端真实子树口径 doneCount/totalCount，不随 filter 剪枝变化） */
+function RowLead({ task, state }: { task: TaskRow; state: TaskDisplayState }) {
   const { t } = useTranslation()
-  const stats = hasChildren ? subtreeStats(task.id, childrenOf) : null
   return (
     <>
       {state.visible.priority && (
@@ -486,9 +478,9 @@ function RowLead({
       )}
       {state.visible.status && <TaskStatusIcon status={task.status} />}
       <span className="truncate text-sm">{task.title}</span>
-      {stats && (
+      {task.totalCount > 0 && (
         <span className="shrink-0 text-xs text-muted-foreground">
-          {stats.done}/{stats.total}
+          {task.doneCount}/{task.totalCount}
         </span>
       )}
     </>
@@ -562,7 +554,7 @@ function TaskTreeItem({
         ) : (
           <span className="size-4 shrink-0" aria-hidden />
         )}
-        <RowLead task={task} state={state} hasChildren={children.length > 0} childrenOf={childrenOf} />
+        <RowLead task={task} state={state} />
         <RowMeta task={task} state={state} onOpenProject={onOpenProject} />
       </div>
       {children.length > 0 && !isCollapsed && (
@@ -593,15 +585,11 @@ function TaskTreeItem({
 /** 平铺视图行：不渲染树；有父任务时标题后跟灰字 "› 父标题" 面包屑（对齐 Linear Active / 图6、8） */
 function FlatRow({
   task,
-  hasChildren,
-  childrenOf,
   state,
   onOpenTask,
   onOpenProject,
 }: {
   task: TaskRow
-  hasChildren: boolean
-  childrenOf: Map<string, TaskRow[]>
   state: TaskDisplayState
   onOpenTask: (taskId: string) => void
   onOpenProject?: (projectId: string) => void
@@ -617,7 +605,7 @@ function FlatRow({
     >
       {/* 与 tree 行同宽的左占位，保证优先级/状态图标纵向对齐 */}
       <span className="size-4 shrink-0" aria-hidden />
-      <RowLead task={task} state={state} hasChildren={hasChildren} childrenOf={childrenOf} />
+      <RowLead task={task} state={state} />
       {task.parentId && task.parentTitle && (
         <span className="flex min-w-0 shrink-0 items-center gap-0.5 text-xs text-muted-foreground">
           <ChevronRight className="size-3 shrink-0" />

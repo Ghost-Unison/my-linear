@@ -430,7 +430,7 @@ func SoftDeleteProject(pool *pgxpool.Pool) gin.HandlerFunc {
 
 // buildProjectMemberMap 批量取 project→members 引用列表（ProjectRow 内嵌 members，行完备 P2-B），
 // 与 buildProjectLabelMap 同构避免 N+1；组内 m.name 升序由 SQL 的 ORDER BY pm.project_id, m.name 保证
-//（与 ListProjectMembers 同构），handler 只做 append 不重排；无成员的项目在 map 中无 key，
+// （与 ListProjectMembers 同构），handler 只做 append 不重排；无成员的项目在 map 中无 key，
 // 由 toProjectRow 兜底为 []。失败时已写入 500 响应，返回 ok=false，调用方直接 return（同 buildProjectLabelMap 约定）
 func buildProjectMemberMap(c *gin.Context, queries *store.Queries, projectIds []uuid.UUID) (map[uuid.UUID][]member.MemberRef, bool) {
 	rows, err := queries.ListMembersByProjectIds(c.Request.Context(), projectIds)
